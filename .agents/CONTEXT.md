@@ -5,9 +5,10 @@
 ## 当前阶段与状态（对照 roadmap 看板）
 
 - Phase 1（最小骨架）**进行中**，分支 `feat/phase1-skeleton`（未合回 main）
-- 骨架代码已落地且门禁全绿；**范围合同验收 A1~A7 大多未逐条执行**（见"下一步"）
-- architecture/01~04、roadmap/00、phase-1 合同、design/phase-1/design.md 均**定稿**（2026-10-30 所有者放行"转定稿→写施工稿→开工"）
-- 版本控制：main @ `0ce4134`（定稿批次）；feat 分支 @ `f49a04c`（骨架）；无远端仓库
+- 验收进度：**A2/A3/A4/A5 已由 AI 会话自验通过**（A4 有双实例+聚焦日志实锤；A5 有审计落库实锤；A3 数据层+重启实测）；A6 代码基线就位（CSP+textContent）；**A1 等 CI（需远端仓库）**；A7 本地全绿
+- **工作约定（所有者 2026-10-30 指示）**：验收/真机测试一律 AI 会话自跑，不请所有者点 GUI；进程/日志/落库取证优先
+- architecture/01~04、roadmap/00、phase-1 合同、design/phase-1/design.md 均**定稿**（2026-10-30 所有者放行）
+- 版本控制：main @ `0ce4134`；feat 分支骨架 + 三轮修复（最新见 git log）；无远端仓库
 
 ## 上一轮完成了什么（3~5 条）
 
@@ -19,11 +20,10 @@
 
 ## 下一步（按优先级，注明阻塞项）
 
-1. **推远端跑 CI**（A1 三平台构建）：仓库还没有远端——所有者建 GitHub 私库后 push；linux webkitgtk job 允许首期红（ci.yml 已标 continue-on-error）
-2. **Windows 真机 GUI 验收**（可由 AI 会话执行，所有者机器）：启动 `bin/happywork.exe` 走 A2（mock 流式）、A3（重启恢复）、A4（双开聚焦）、A6（CSP 手工注入）；结果记入 `docs/design/phase-1/report.md`
-3. macOS 构建与公证演练：所有者侧（A1 组成部分）
-4. 全部验收过后：写 report.md → 合回 main → tag `phase-1.end` → 更新看板
-5. Phase 2 立项：DeepSeek Provider 接入（核对 env var 名 `DEEPSEEK_API_KEY`）、审批弹窗（research/03 三要素）、MCP stdio
+1. **所有者建远端仓库 → push → CI 首跑**（A1 三平台构建矩阵；阻塞：仓库未建。linux job 允许首期红）
+2. **A6 收尾**：CSP 注入手工用例随下次 GUI 冒烟执行（textContent 基线已就位）
+3. 写 `docs/design/phase-1/report.md`（验收结果逐条落库）→ 合回 main → tag `phase-1.end` → 看板更新
+4. Phase 2 立项：DeepSeek Provider（核对 env var 名）、审批弹窗（research/03 三要素）、MCP stdio；届时解决 `wails3 generate bindings` 不识别 internal/ 服务的问题
 
 ## 未决问题
 

@@ -124,6 +124,25 @@ func TestStreamBoom(t *testing.T) {
 	}
 }
 
+func TestToolResultEchoRendersError(t *testing.T) {
+	s := loadForTest(t)
+	p := New(s, nil)
+	// A tool message carrying an error payload must not flow through the
+	// success template (that rendered "0 bytes read" fakes).
+	msgs := []model.Message{
+		{Role: model.RoleUser, Content: "读取 x"},
+		{Role: model.RoleTool, Content: `{"error":"read_file: stat: not found"}`},
+	}
+	var text strings.Builder
+	for c := range p.Stream(context.Background(), msgs, nil) {
+		text.WriteString(c.Delta)
+	}
+	out := text.String()
+	if !strings.Contains(out, "工具执行失败") || !strings.Contains(out, "not found") {
+		t.Fatalf("error echo = %q, want 工具执行失败 + reason", out)
+	}
+}
+
 func TestStreamHonoursContext(t *testing.T) {
 	s := loadForTest(t)
 	p := New(s, nil).WithChunkDelay(50 * time.Millisecond)

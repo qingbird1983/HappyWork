@@ -260,8 +260,14 @@ func renderEcho(tpl string, msgs []model.Message) string {
 			Content   string `json:"content"`
 			SizeBytes int64  `json:"size_bytes"`
 			Truncated bool   `json:"truncated"`
+			Error     string `json:"error"`
 		}
 		_ = json.Unmarshal([]byte(m.Content), &res)
+		if res.Error != "" {
+			// Never render an error payload through a success template —
+			// zero-value fields would fake a "0 bytes read" success.
+			return "工具执行失败：" + res.Error
+		}
 		r := strings.NewReplacer(
 			"{path}", res.Path,
 			"{content}", res.Content,

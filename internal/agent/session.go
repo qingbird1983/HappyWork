@@ -192,7 +192,7 @@ func (s *Session) run(ctx context.Context, text string) {
 			tm := storage.Message{
 				ID: storage.NewID(), SessionID: sessID,
 				Role: storage.RoleTool, Content: r.content,
-				ToolCallID: r.callID,
+				ToolCallID: r.callID, ToolName: r.name,
 			}
 			if err := s.mgr.store.AppendMessage(bg, &tm); err != nil {
 				s.mgr.log.Printf("agent: persist tool message: %v", err)
@@ -250,6 +250,7 @@ func (s *Session) streamTurn(ctx context.Context, hist []model.Message) (string,
 // toolResult carries one executed call back into the transcript.
 type toolResult struct {
 	callID  string
+	name    string
 	content string
 }
 
@@ -280,7 +281,7 @@ func (s *Session) execCalls(ctx context.Context, calls []model.ToolCall) []toolR
 			s.mgr.log.Printf("agent: persist tool result: %v", err)
 		}
 		s.mgr.emitEvent(sessID, EventTool, ToolPayload{SessionID: sessID, Name: call.Name, Status: status})
-		out = append(out, toolResult{callID: call.ID, content: resultJSON})
+		out = append(out, toolResult{callID: call.ID, name: call.Name, content: resultJSON})
 	}
 	return out
 }

@@ -225,6 +225,9 @@ func TestToolCallTurn(t *testing.T) {
 	if toolMsg.ToolCallID != "c1" {
 		t.Fatalf("tool call id = %q", toolMsg.ToolCallID)
 	}
+	if toolMsg.ToolName != "read_file" {
+		t.Fatalf("tool name = %q, want read_file", toolMsg.ToolName)
+	}
 	if n := len(msgs); n != 4 {
 		t.Fatalf("transcript len = %d, want 4 (user/assistant+call/tool/assistant)", n)
 	}

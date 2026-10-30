@@ -24,7 +24,16 @@ function transcriptToBlocks(msgs: Awaited<ReturnType<typeof api.transcript>>): B
   for (const m of msgs) {
     if (m.role === "user") out.push({ kind: "user", text: m.content });
     else if (m.role === "assistant") out.push({ kind: "assistant", text: m.content });
-    else if (m.role === "tool") out.push({ kind: "tool", text: `${m.toolName ?? "tool"} 完成` });
+    else if (m.role === "tool") {
+      const name = m.toolName || "tool";
+      let label = `${name} 完成`;
+      try {
+        if ((JSON.parse(m.content) as { error?: string }).error) label = `${name} 失败`;
+      } catch {
+        /* non-JSON result: keep the neutral label */
+      }
+      out.push({ kind: "tool", text: label });
+    }
   }
   return out;
 }

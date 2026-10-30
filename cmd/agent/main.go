@@ -58,7 +58,10 @@ func main() {
 	manager := agent.NewManager(store, provider, desktop.NewEmitter(), logger)
 
 	// Focus requests from second instances arrive on a poll goroutine.
-	if err := lock.WatchFocus(func() { desktop.FocusMainWindow() }); err != nil {
+	if err := lock.WatchFocus(func() {
+		logger.Printf("focus requested by a second instance")
+		desktop.FocusMainWindow()
+	}); err != nil {
 		logger.Printf("focus watcher: %v", err)
 	}
 
