@@ -29,7 +29,7 @@
 ## 3. 开工前置条件
 
 - [architecture/01](../architecture/01-overview.md)、[02](../architecture/02-core-loop-and-data.md) 转定稿（当前评审中）
-- `docs/design/phase-1/` 施工设计稿定稿（含前端框架选型结论 + 依赖准入登记）
+- `docs/design/phase-1/` 施工设计稿定稿（前端框架已定 React + TS，[ADR-0007](../adr/ADR-0007-frontend-react.md)；设计稿含依赖准入登记）
 - 工具链就绪：Go 1.26+、wails3 CLI、三平台构建环境（macOS 公证账号提前验证）
 
 ## 4. 交付物
@@ -54,7 +54,7 @@
 
 | 依赖/风险 | 说明与缓解 |
 |---|---|
-| 前端框架选型（待决策） | 开工前定（见 README 待决策表）；不阻塞 design 稿其余部分 |
+| 前端工具链落地（React 已定，ADR-0007） | Phase 1 设计稿登记 eslint/prettier/tsc 配置与依赖准入 |
 | Wails v3 API 变更 | 钉 minor 版本；所有调用走适配层（ADR-0001） |
 | Linux webkitgtk 环境 | A1 首次验证即暴露；AppImage/deb 打包方式在本阶段定 |
 | gofrs/flock 依赖准入 | 引入前登记 standards/04 附录 A |

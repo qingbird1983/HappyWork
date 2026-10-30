@@ -49,7 +49,7 @@ apps/             各入口（CLI / 桌面 / Web，只做薄壳）
 cmd/agent/          可执行入口（main.go 只装配）
 internal/           全部内部包：agent / model / tool / permission / sandbox /
                     rollback / audit / mcp / hook / storage / secrets / desktop / singleinst
-frontend/           WebView 前端源码（TS；框架 Phase 1 前定）
+frontend/           WebView 前端源码（React + TS，ADR-0007）
 migrations/         SQLite 迁移脚本
 fixtures/           测试夹具（Phase 1 起随首批夹具重建）
 ```

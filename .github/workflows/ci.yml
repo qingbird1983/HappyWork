@@ -42,5 +42,12 @@ jobs:
           else
             echo "skip: go.mod not present (pre-code phase)"
           fi
+      - name: frontend lint & typecheck（React + TS，ADR-0007）
+        run: |
+          if [ -f frontend/package.json ]; then
+            cd frontend && npm ci && npm run lint && npm run typecheck
+          else
+            echo "skip: frontend/package.json not present (pre-code phase)"
+          fi
       - name: check-size（体量哨兵）
         run: bash scripts/check-size

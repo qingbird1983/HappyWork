@@ -131,4 +131,4 @@ migrations/                    # SQL 迁移
 | 审批后参数漂移 | TOCTOU 管道 + JCS hash 锁定 | 04 |
 | SQLite 损坏 / 双实例 | 单写者、WAL、在线备份、单实例锁 | 02、04 |
 
-待决：前端框架（Phase 1 开工前定，登记于 README 待决策表）；首个真实 Provider 选型（Phase 2）；ML 分类器作为决策维度实现方式（Backlog）。
+待决：首个真实 Provider 选型（Phase 2）；ML 分类器作为决策维度实现方式（Backlog）。前端框架已定 React + TS（[ADR-0007](../adr/ADR-0007-frontend-react.md)）。

@@ -37,9 +37,7 @@ Project documentation is maintained in **Chinese** under [`docs/`](docs/README.m
 
 > Owner decisions are collected in this table (mirrored in both READMEs) and flagged in CHANGELOG entries; once decided, write an ADR and remove the row.
 
-| Item | Raised | Status |
-|---|---|---|
-| Frontend framework (React / Vue / Svelte / vanilla TS) | 2026-10-30 | Pending (before Phase 1 starts) |
+None pending (frontend framework decided: React, see [ADR-0007](docs/adr/ADR-0007-frontend-react.md)); new items will be registered here.
 
 ## License
 

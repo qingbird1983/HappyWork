@@ -19,8 +19,7 @@
 ## 遗留与下一步
 
 - architecture/01~04、roadmap/00 为**评审中**——需所有者过目后转定稿（Phase 1 开工前置）。
-- 前端框架选型待所有者拍板（README 待决策表）。
-- 下一步：design/phase-1/ 施工设计稿 → 定稿 → feat/phase1-skeleton 开工。
+- 下一步：design/phase-1/ 施工设计稿（前端已定 React+TS，ADR-0007）→ 定稿 → feat/phase1-skeleton 开工。
 
 ## 已提取的沉淀
 

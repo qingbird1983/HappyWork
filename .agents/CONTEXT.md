@@ -13,20 +13,18 @@
 
 - v2 简报评审沉淀为 `docs/research/01-v2-design-review.md`（4 类发现 + 外部事实核实）
 - V3 架构基线落盘：`docs/architecture/01~04`（权限合并、双指纹、路径规范化、备份式回滚、沙箱分期、上下文窗口管理、崩溃恢复为 v3 新增/修订点）
-- 六项决策 ADR-0001~0006（技术栈 / 权限模型 / 双指纹+JCS / 路径规范化 / MVP 安全降级 / MIT）
-- 治理初始化：README×2、glossary、roadmap 看板 + phase-1 草稿、standards/01/04/05 回填（Go ≥1.26 + TS）、CI 门禁（go.mod 落地前跳过 Go 步骤）、check-size 适配
+- 七项决策 ADR-0001~0007（技术栈 / 权限模型 / 双指纹+JCS / 路径规范化 / MVP 安全降级 / MIT / 前端 React+TS）
+- 治理初始化：README×2、glossary、roadmap 看板 + phase-1 草稿、standards 回填（Go ≥1.26 + React/TS）、CI 门禁（go.mod 与 frontend/package.json 落地前跳过）、check-size 适配
 - briefs 中 v2 简报已标记"已沉淀"（2026-10-30，去向 docs/）
 
 ## 下一步（按优先级，注明阻塞项）
 
 1. 所有者评审 architecture/01~04 与 roadmap/00，转**定稿**；阻塞：需所有者过目（可在下次会话逐篇走）
-2. 前端框架选型（README 待决策表）；阻塞：需所有者拍板，建议 Phase 1 设计稿一起定
-3. 写 `docs/design/phase-1/` 施工设计稿（含 SQLite 驱动选型、mock Provider 行为定义、依赖准入转正）；阻塞：第 1 步定稿
-4. Phase 1 开工：`git checkout -b feat/phase1-skeleton`
+2. 写 `docs/design/phase-1/` 施工设计稿（SQLite 驱动选型、mock Provider 行为定义、React 前端依赖准入与 eslint/prettier/tsc 配置）；阻塞：第 1 步定稿
+3. Phase 1 开工：`git checkout -b feat/phase1-skeleton`
 
 ## 未决问题
 
-- 前端框架（React/Vue/Svelte/原生 TS）——README 待决策表
 - SQLite 驱动：modernc.org/sqlite（纯 Go、免 CGO）vs mattn/go-sqlite3（成熟、需 CGO）——Phase 1 设计稿决策
 - matchKey 是否纳入"内容信任级"维度——Phase 3 评审（architecture/03 §待决）
 - Hook 签名密钥签发方式（倾向本地生成 + TOFU）——Phase 3

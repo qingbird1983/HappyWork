@@ -9,14 +9,14 @@
 
 | 坑位 | 工具 | 命令 | CI 强度 |
 |---|---|---|---|
-| 格式化 | gofmt（Go）/ prettier（前端，Phase 1 随框架定） | `gofmt -l .`（输出为空即过） | check 挂门禁 |
-| Lint | golangci-lint（启用 govet、errcheck、staticcheck、ineffassign 等） | `golangci-lint run` | error 级挂门禁 |
-| 类型检查 | go vet（Go 编译器本身强类型）；前端 tsc（Phase 1 回填） | `go vet ./...` | 挂门禁 |
+| 格式化 | gofmt（Go）/ prettier（React 前端） | `gofmt -l .`；前端 `npm run fmt:check` | check 挂门禁 |
+| Lint | golangci-lint（govet、errcheck、staticcheck 等）+ eslint（React 前端） | `golangci-lint run`；前端 `npm run lint` | error 级挂门禁 |
+| 类型检查 | go vet（Go 强类型编译）+ tsc（React 前端） | `go vet ./...`；前端 `npm run typecheck` | 挂门禁 |
 | 构建 | `go build ./...`（CI 门禁）；`wails3 build`（本地/发布，三平台） | `go build ./...` | 挂门禁 |
 
-- 锁文件一律提交入库；依赖版本锁定（Go：`go.mod` + `go.sum`；前端 lockfile 随框架定）。
-- 本项目语言：**Go ≥ 1.26**（Wails v3 要求，见 [ADR-0001](../adr/ADR-0001-adopt-go-wails3.md)）+ **TypeScript**（框架待决策）；Wails v3 钉 minor 版本线。
-- 代码未开工（Pre-code）：上表命令在 `go.mod` 落地前 CI 以守卫条件跳过（见 `.github/workflows/ci.yml`）。
+- 锁文件一律提交入库；依赖版本锁定（Go：`go.mod` + `go.sum`；前端：`package-lock.json`，npm）。
+- 本项目语言：**Go ≥ 1.26**（Wails v3 要求，见 [ADR-0001](../adr/ADR-0001-adopt-go-wails3.md)）+ **React + TypeScript**（[ADR-0007](../adr/ADR-0007-frontend-react.md)，Vite 构建）；Wails v3 钉 minor 版本线。
+- 代码未开工（Pre-code）：上表命令在 `go.mod` / `frontend/package.json` 落地前 CI 以守卫条件跳过（见 `.github/workflows/ci.yml`）。
 
 ## 2. 错误处理
 
