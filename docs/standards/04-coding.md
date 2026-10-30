@@ -18,6 +18,21 @@
 - 本项目语言：**Go ≥ 1.26**（Wails v3 要求，见 [ADR-0001](../adr/ADR-0001-adopt-go-wails3.md)）+ **React + TypeScript**（[ADR-0007](../adr/ADR-0007-frontend-react.md)，Vite 构建）；Wails v3 钉 minor 版本线。
 - 代码未开工（Pre-code）：上表命令在 `go.mod` / `frontend/package.json` 落地前 CI 以守卫条件跳过（见 `.github/workflows/ci.yml`）。
 
+### 1.1 门禁在哪里跑（ADR-0018）
+
+**一条命令、两地同源**：`bash scripts/gate.sh`（追加 `--race`、`--build`、`--skip-lint`）。上表的每一坑都由这个脚本执行，本地与 CI 跑的是同一份实现——不允许"CI 里那套"和"本地那套"各写一份。
+
+| 时机 | 跑什么 | 说明 |
+|---|---|---|
+| 每轮提交前（默认） | `bash scripts/gate.sh --race` | 本机就是目标平台（Windows），零成本；**这是日常的事实来源** |
+| 本机功能验证 | `bash scripts/gate.sh --build` | 追加当前平台 `wails3 build` |
+| 里程碑（合并 main 前、发版前） | 远端 `CI` workflow `workflow_dispatch` | 独立机器复核；矩阵首发只有 `windows` |
+| 正式标签 `v*` | 远端 `Release` workflow | 三平台齐跑、缺任一即失败，不因 ADR-0018 放宽 |
+
+- `ci.yml` **不再有 push 触发**：Actions 分钟按 Linux 1× / Windows 2× / macOS 10× 计费，每轮推送三平台既不必要也贵（一次实跑教训：无 `timeout-minutes` 的挂死步骤白烧约 133 分钟额度，见 P-016）。
+- 因此"main 绿"不再是自动事实：合并 main 之前必须自己确认本地 `gate.sh --race` 全绿，合并后手动 dispatch 一次远端 CI 作为里程碑证据。
+- 每个 job 必须有 `timeout-minutes`；workflow 必须有 `concurrency` + `cancel-in-progress`。缺任何一条视为流水线缺陷，不合并。
+
 ## 2. 错误处理
 
 - 错误必须显式传播与分类（类型化错误 / error code），禁止裸抛/裸捕获后吞掉。

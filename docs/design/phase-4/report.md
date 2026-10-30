@@ -1,6 +1,6 @@
 # Phase 4 验收报告：不可变审计 + 备份式回滚 + 三平台签名 CI
 
-- 状态：实现完成，本地门禁与远端 `ci.yml` 全绿（run `41098214658`、文档轮 `41098824262`）；A5 真机待验，A6 因 workflow 未落地默认分支而**受阻**（P-015）；`v*` 发版按所有者决定另排
+- 状态：实现完成；本地门禁与远端 `ci.yml`（分支 + main）全绿；A5 真机待验；A6 = Windows 单平台 dry-run 待复跑（macOS 已绿、Linux 按首发范围延后）；`v*` 发版按所有者决定另排
 - 日期：2026-10-30
 - 范围合同：[phase-4-audit-rollback-signing.md](../../roadmap/phase-4-audit-rollback-signing.md)
 - 设计与决策：[design.md](design.md)、[release-signing.md](release-signing.md)、[ADR-0015](../../adr/ADR-0015-immutable-audit-chain.md)、[ADR-0016](../../adr/ADR-0016-versioned-backup-restore.md)、[ADR-0017](../../adr/ADR-0017-release-signing.md)
@@ -26,9 +26,9 @@
 | A3 备份版本与恢复 | 通过（自动化 + 会话级集成） | `TestWriteCreateOverwriteVersions`、`TestWriteRetentionPrunes`、`TestWriteQuotaRefusesOverwrite`、`TestRestoreCreatesSafetyCopyAndCanBeUndone`、`TestRestoreRecreatesDeletedFile`、`TestFileBackupRoundtrip`；新增 `TestPhase4RestoreFlowWithSafetyCopy`（恢复→安全副本→再恢复回 v2，两次 `backup/restore` 审计）、`TestPhase4RestoreRejectedWhileRunning`（运行中 `ErrBusy`，空闲后成功） |
 | A4 新建撤销与写后校验 | 通过（自动化） | `TestUndoCreate`、`TestUndoCreateRejectsModified`、`TestPhase4UndoCreatedFileMovesToBackupArea`（撤销后工作区文件消失、内容在 `backups/<session>/discarded/...trash` 可读、审计 `backup/undo_create`）、`TestVerifyFailureRollsBack`、`TestVerifyFailureOnCreateDiscards`（故障注入自动回滚/移入备份区并审计 `backup/verify_fail`）、`TestWriteRejectsSensitiveAndTraversal` |
 | A5 UI/API | 部分：自动化通过，真机待验 | 前端 `render.test.tsx` 21 用例全绿，含新增审计/备份面板注入用例（恶意 `decision` 只能落到 `other` 类名、路径与原因转义、破损横幅显示首个坏行、运行中恢复按钮 `disabled`、二次确认文案）；`npm run lint/typecheck/format:check/test:unit/build` 全绿，App.tsx 568 行（<600）。**待所有者真机验收**：面板打开、链状态与导出文件、恢复/撤销交互与运行中提示 |
-| A6 签名 dry-run | **阻塞**：workflow 尚未在默认分支落地 | `release.yml` 已实现且通过 YAML 解析（5 个 job），但 `gh workflow run release.yml --ref feat/phase4-audit-rollback-signing` 返回 `404 workflow not found on the default branch`，`gh workflow list --all` 里也没有 `Release`——GitHub 的 `workflow_dispatch` 只承认**默认分支上存在**的 workflow 文件，`--ref` 不能引用 feature 分支的流水线定义（P-015）。因此 A6 的取证时机必须排在合并 main 之后；命令与任务名仍以本机 `wails3 task --list-all`、`wails3 tool sign -help`、Wails v3.0.0 `internal/commands/sign.go` 为准，dry-run 永不产出 Release。本次提交前没有任何远端运行证据，故不标注为通过 |
+| A6 签名 dry-run | 部分：macOS 远端绿；Windows 待复跑；Linux 按首发范围延后 | 取证只能在默认分支触发（P-015），合并 main 后 run `41102612818` 实跑一次：`prepare` 成功、**`macos` dry-run 全绿**（ad-hoc 签名 + `codesign --verify --deep --strict`）、`linux` 因 `dpkg-sig` 在 Ubuntu 26.04 镜像不可安装而失败、`windows` 挂死被掐（§4.10）。Windows 侧验签机制已重写（内存临时证书 + `Get-AuthenticodeSignature` 断言），本机无 NSIS/signtool，必须由远端再跑一次才算 A6；Linux 按所有者"首发 Windows 优先"的决定延后，登记在 backlog。**验收范围随 ADR-0018 收窄为 Windows dry-run 三件事：构建、签名、验签** |
 | A7 真实签名（条件） | 未执行（条件遗留） | 需要所有者提供 Windows Authenticode 证书、Apple Developer ID + 公证账号、Linux GPG 私钥与密钥 ID 并配置为 GitHub Actions Secrets。未提供前只记"条件未执行"，不伪造证据 |
-| A8 门禁 | 部分：`ci.yml` 全绿（run `41098214658`：`check` + 三平台 `build`）；`release.yml` dry-run 无法触发 | 见 §3。看板上的 A8 还包含"release dry-run CI 全绿"，受 A6 同一条默认分支限制（P-015），要等合并 main 后手动触发并三平台绿了才能勾掉 |
+| A8 门禁 | 部分：本地同源门禁全绿 + `ci.yml` 分支与 main 均绿；缺一次 Windows release dry-run | 本地 `bash scripts/gate.sh --race` 全绿（fmt/build/vet/lint/test/前端四门/渲染安全/体量）；远端 `ci.yml` run `41098214658`、`41102545807` 全绿。看板 A8 里"release dry-run CI 全绿"这一项按 ADR-0018 收敛为 **Windows 单平台 dry-run 绿**，其余平台延后不算失败 |
 
 ## 3. 本地门禁结果（2026-10-30）
 
@@ -43,20 +43,26 @@
 | 前端 | `npm run lint` / `typecheck` / `format:check` / `test:unit` / `build` | 全绿；21 用例通过；产物 `dist/assets/index-*.js` 270.31 kB |
 | 版本门禁 | `bash scripts/check-version.sh v0.0.1` | 通过；`v9.9.9` 与 `phase-4.end` 分别按预期失败（退出码 1 与 2） |
 | 桌面构建 | `wails3 build`（Windows 本机） | 通过，产物 `bin/happywork.exe`；三平台 `wails3 build` 由 CI 矩阵覆盖 |
-| 远端 CI | `ci.yml` runs `41094526014`、`41096410911`、`41098214658`（分支 `feat/phase4-audit-rollback-signing`） | 前两次都只红在 `check`，三平台 `build` job 均通过：第一次审计导出含工作区绝对路径（§4.8，P-013），第二次 `database is locked`（§4.9，P-014）。第三次 run `41098214658` **全绿**：`check` + `build (windows/ubuntu/macos)` 四个 job 全部 success |
+| 远端 CI | `ci.yml` runs `41094526014`、`41096410911`、`41098214658`（分支 `feat/phase4-audit-rollback-signing`）+ main 上的 `41102545807` | 前两次都只红在 `check`，三平台 `build` job 均通过：第一次审计导出含工作区绝对路径（§4.8，P-013），第二次 `database is locked`（§4.9，P-014）。第三次 `41098214658` **全绿**（`check` + 三平台 `build`），合并 main 后的 `41102545807` 同样全绿。此后按 ADR-0018，`ci.yml` 不再每轮 push 触发 |
+| 远端 Release dry-run | run `41102612818`（main，`workflow_dispatch`）：`prepare` 成功、`macos` 成功、`linux` 失败、`windows` 挂死被掐 | 见 §4.10。已改成"内存临时证书 + `Get-AuthenticodeSignature` 断言"并给全部 job 加超时；macOS 侧的 ad-hoc 签名 + 校验已有一次真实远端绿。Windows 侧仍需一次远端 dry-run（本机没有 NSIS 与 `signtool`），成本已压到单平台 |
+| 同源门禁脚本 | `bash scripts/gate.sh`（`--race` / `--build` / `--skip-lint`），`ci.yml` 的 check job 现在调用同一脚本 `--skip-lint` | 全绿；本地与远端不再各写一份命令（ADR-0018） |
 
 ## 4. 实现期间的发现与处置
 
 1. **构建资产与配置脱节**：`build/linux/nfpm/nfpm.yaml`、`build/windows/info.json`、`build/windows/nsis/wails_tools.nsh`、`build/darwin/Info.plist` 仍是 `wails3 init` 模板值（`happywork.exe`、"My Company"、0.1.0），与 `build/config.yml` 的 0.0.1 不一致。已运行 `wails3 task common:update:build-assets` 重新生成并入库，同时把 `scripts/check-version.sh` 扩成"配置 + 生成资产"双校验：只校验配置会让发布物自报错误版本。`build/linux/nfpm/nfpm.yaml` 的 `homepage` 已从 `wails.io` 改为项目仓库地址。
 2. **产物名是小写项目名**：实测 `wails3 build` 产出 `bin/happywork.exe`，NSIS 产出 `bin/happywork-amd64-installer.exe`（`INFO_PROJECTNAME` + `ARCH`），并非设计稿里写的 `HappyWork.*`。workflow 与文档统一改为小写并对安装包/AppImage 使用通配匹配 + 缺失即失败。
 3. **`wails3 tool sign` 的参数语义**：Linux 的 `--pgp-key` 传给 `dpkg-sig -k`，是**密钥 ID**而非私钥文件路径（读 Wails v3.0.0 源码确认）；`rpmsign`/`rpm --checksig` 依赖 `~/.rpmmacros` 的 `%_gpg_name`，且 `rpm --checksig` 需要先导入公钥，否则只会报 `digests OK`。因此 workflow 写 `rpmmacros`、导入发布公钥，并把断言收紧到 `digests signatures OK`。
-4. **dry-run 不能假装"已签名"**：macOS 没有 Developer ID 身份时 DMG 无法签名，故 DMG 的 `codesign`/`spctl`/`stapler` 校验只在正式标签路径执行；Windows dry-run 仍走真实 `signtool verify /pa /all`（临时自签证书装入当前用户受信任根），保证验签链路真的跑过。
+4. **dry-run 不能假装"已签名"**：macOS 没有 Developer ID 身份时 DMG 无法签名，故 DMG 的 `codesign`/`spctl`/`stapler` 校验只在正式标签路径执行。Windows 侧原设计"把临时自签证书装进当前用户受信任根，再让 `signtool verify /pa /all` 走真链路"在远端实跑中被证伪：导入受信任根会弹系统确认框，无人值守 runner 上没点，job 静默挂死 63 分钟（§4.10）。现改为内存构造临时证书 + `Get-AuthenticodeSignature` 断言"签名存在/签名者匹配/具备代码签名 EKU/状态仅 `Valid` 或 `NotTrusted`"，`/pa` 真链路只保留给真实证书路径。
 5. **`workflow_dispatch` 的 `dry_run` 输入被去掉**：手动触发没有标签就没有"正式"语义，保留一个不生效的输入只会误导，因此 dispatch 一律 dry-run，`release` job 条件为 `github.event_name == 'push'`，产物名用 `release` / `dry-run-preview` 后缀隔离。
 6. **GPG 口令卫生**：口令写入 `0600` 临时文件后用 `--passphrase-file` 传给 `gpg`；`wails3 tool sign --pgp-password` 只能收字符串，故从该文件读出后传入，不在任何 `echo` 中出现。已知限制：Wails 内部把该口令作为 `dpkg-sig --gpg-options` 参数传入，会短暂出现在子进程命令行中（ephemeral runner 上可接受，上游行为，不掩盖）。
 7. **审批链路拆分**：`askApproval` 从 `exec.go` 移到 `approval.go` 以守住 600 行硬门槛，无行为变更；审计写入改用 `auditApproval`/`auditPermissionRule` helper，消掉重复构造。
 8. **首跑 CI 抓到审计证据泄漏工作区绝对路径（仅 Linux 复现）**：`tool_call`/`approval`/`permission_rule` 三类记录把 `matchKey` 原样写进 `detail`，而 `permission.WriteMatchKey` 里含**绝对父目录**；导出 JSONL 后用户的目录结构随证据外流，违反 D2。本地之所以全绿有两层原因——Windows 上 matchKey 被 `strings.ToLower` 处理过，而测试用 `strings.Contains(jsonl, root.String())` 做**字节精确**比较；即便大小写对齐，路径还躺在 JSON 字符串字段里被多一层反斜杠转义。处置分两步：先把测试改成"去掉分隔符 + 忽略大小写"的比较，让它在本机也红（复现测试先于修复，standards/05 §1）；再从源头修——新增 `Session.auditKey/auditPath`，写进审计的目录一律工作区相对（根内为 `.` 或 `src/cmd`，根外为 `<outside>`），MCP 等无路径键原样透传，数据库里用于匹配的 `permission_rules.match_key` 保持绝对（证据链与匹配键分离）。修复后 `TestPhase4AuditKeyKeepsEvidenceWorkspaceRelative` 固化平台差异。
 
 9. **第二次 CI 失败暴露 SQLite 连接层缺陷（同样只在远端复现）**：`check` job 报 `database is locked (517)` 与 `rollback: mark undo: database is locked (5)`。根因是三层叠加——① `sql.DB` 池未设上限，而 SQLite 的 `busy_timeout/WAL/foreign_keys` 是**按连接**生效的，pragma 只落在第一条连接上；② `AppendAudit` 的延迟事务先读链头再写，属于读→写升级，遇到别的连接已提交会立刻返回 `SQLITE_BUSY_SNAPSHOT`(517)，`busy_timeout` 不重试；③ `AppendMessage` 的"先查 `MAX(seq)` 再插入"和备份版本分配不在同一事务，交错时撞 `UNIQUE(session_id, seq)`。处置：`SetMaxOpenConns(1)`（单用户桌面库，串行比 WAL 并发更有价值，注释已写取舍），新增 `internal/storage/sqlite_write.go` 用 `writeTx` 把序号/版本分配并入插入事务，并补 `sqlite_contention_test.go`（4 写者 × 4 读者 × 25 轮）——修前本机三条症状全部复现，修后 `-count=3` 稳定绿。教训见 P-014；这也说明 P-013 的"本地全绿≠跨平台全绿"同样适用于并发路径。
+
+10. **A6 远端首跑：Windows job 静默挂死 63 分钟**（run `41102612818`，2026-10-31）。`prepare` 1.5 分钟、`macos` 106 秒成功、`linux` 20 秒失败（`E: Unable to locate package dpkg-sig`——`ubuntu-latest` 已是 Ubuntu 26.04，该包不可安装），`windows` 卡死在"准备签名证书"步骤直到被平台掐掉。按 Actions 倍率（Linux 1× / Windows 2× / macOS 10×）折算，这次运行约 **153 分钟额度**，当天 7 次运行合计约 **319 分钟**。根因与处置见 §4.4、P-016 与 [ADR-0018](../../adr/ADR-0018-local-first-gate-and-on-demand-ci.md)：所有 job 补 `timeout-minutes`，两个 workflow 加 `concurrency` + `cancel-in-progress`，`ci.yml` 取消 push 触发，`release.yml` 的 dry-run 默认只跑首发平台 `windows`，日常门禁改由本地同源脚本 `bash scripts/gate.sh` 承担。
+11. **一处真实的事件顺序缺陷（本机并发才暴露）**：审批超时与预算暂停都先 `setState(StatePaused)` 再发 `EventPaused`，观察方能在"已暂停"状态下读不到暂停原因；并行负载下 `TestApprovalTimeoutPauseResume` 断到 `paused events = 0`。改为**先发事件再翻状态**（`resumeCh` 有 1 格缓冲，提前发事件不会丢 Resume），并在测试里固化顺序不变量：`EventPaused` 的索引必须早于 `EventState(paused)`。修复前该断言本机稳定红（idx 8 > idx 7），修复后绿。
+12. **换行纪律补漏**：`.gitattributes` 原先只强制 `*.sh`/`scripts/*`/`migrations/*.sql` 为 LF，Windows 上 `core.autocrlf=true` 会把 go/ts/tsx/css/json 等 checkout 成 CRLF，导致本机 `prettier --check`、`gofmt -l` 全线误报并留下幻影 diff（P-013 里那个"临时拷出去再比"的绕法就是为它准备的）。现对这些扩展名统一 `eol=lf`，本地与 CI 看同一份字节。
 
 ## 5. 遗留与后续
 

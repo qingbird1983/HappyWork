@@ -30,6 +30,13 @@ Phase 4（不可变审计 + 备份式回滚 + 三平台签名 CI）实现完成�
 - P-014 SQLite pragma 按连接生效而池子无上限 + "查最大值再插入"跨调用 → 并发下 `database is locked (517/5)` 与 `UNIQUE(session_id, seq)`；修法是 `SetMaxOpenConns(1)` + 序号/版本在事务内分配（`internal/storage/sqlite_write.go`），并发回归测试 `sqlite_contention_test.go`。
 - 远端 CI：首跑 `41094526014` 与复跑 `41096410911` 都只红在 `check`（依次是 P-013 路径泄漏、P-014 存储并发），第三次 `41098214658` **全绿**（`check` + windows/ubuntu/macos 三个 build）。看板 A8 还要求 `release.yml` dry-run 绿，即 A6。
 
+## 同日追加：门禁机制改造（ADR-0018）
+
+- 起因：A6 首跑 run `41102612818` 里 windows job 无输出挂死 63 分钟（导入受信任根弹确认框），折算约 133 分钟 Windows 额度；所有者要求改机制。
+- 做了什么：新增 `scripts/gate.sh`（本地与 CI 同源，`--race/--build/--skip-lint`）；`ci.yml` 去掉 push 触发 + 矩阵默认只 windows + 全部 job `timeout-minutes` + `concurrency`；`release.yml` 加 `platforms` 输入（默认 windows）、Windows dry-run 改内存临时证书 + `Get-AuthenticodeSignature` 断言（不再碰证书存储）；`.gitattributes` 补齐 `eol=lf`；修一处"先改状态后发事件"的暂停顺序缺陷并加顺序断言。
+- 分支：`fix/phase4-release-dry-run`（含上述 + ADR-0018 + standards/02、04 + report/roadmap/CHANGELOG 0.1.015 + P-016）。合并 main 后需要在 main 上 dispatch 一次 `platforms=windows` 才算 A6。
+- 本机没有 makensis/signtool，所以安装包与 `/pa` 链路只能在远端验证；Linux 的 `dpkg-sig` 在 ubuntu-26.04 镜像缺失，按首发范围延后。
+
 ## 快速恢复上下文
 
 先读本卡 + `.agents/CONTEXT.md`，再看 `docs/roadmap/phase-4-audit-rollback-signing.md` §5 与 `docs/design/phase-4/report.md` §2/§5（待办清单）。

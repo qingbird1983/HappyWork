@@ -75,6 +75,7 @@ docs/
 | adr/ADR-0015-immutable-audit-chain.md | 定稿 | 审计默认哈希链密封、追加只读、无外部锚定与本地威胁模型 |
 | adr/ADR-0016-versioned-backup-restore.md | 定稿 | 备份版本化、恢复可再撤销、新建可撤销、保留与容量 |
 | adr/ADR-0017-release-signing.md | 定稿 | 发布物三平台签名、`v*` 触发、dry-run 与真实凭据条件验收 |
+| adr/ADR-0018-local-first-gate-and-on-demand-ci.md | 定稿 | 门禁以本地同源脚本 `scripts/gate.sh` 为主、远端 CI 按需触发；发布 dry-run 首发平台优先、job 必须有超时上限 |
 | architecture/01-overview.md | 定稿 | 定位与边界、六层架构、包依赖、代码骨架、阶段映射 |
 | architecture/02-core-loop-and-data.md | 定稿 | 会话 Actor、完整状态机、预算、上下文窗口管理、数据模型、崩溃恢复 |
 | architecture/03-permission-and-approval.md | 定稿 | 单一权限模型、四维审批、双指纹、路径规范化管线、工具映射表 |
