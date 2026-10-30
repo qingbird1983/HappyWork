@@ -126,18 +126,23 @@ func (r *Runner) detectLoop(s *Session, call ToolCall) error {
 | `messages` | session_id, turn_id, role, payload_json | 只追加 |
 | `tool_calls` | tool_ref, match_key, exec_hash, idempotency_key, risk, reversible, decision | 唯一键防重复执行 |
 | `approvals` | session_id, turn_id, tool_call_id, tool_ref, exec_hash, decision, scope, decided_by, decided_at, note | 独立审计入口："这次写文件是谁批的"直查此表 |
+| `permission_rules` | tool_ref, action, match_key, decision, use_count | 持久授权；GUI 可撤销 |
+| `audit_log` | session_id, turn_id, trace_id, action, decision, reason, detail_json, prev_hash, entry_hash | 追加只读（UPDATE/DELETE 触发器 `RAISE(ABORT)`）；`entry_hash` 由前驱哈希链式计算，见 [ADR-0015](../adr/ADR-0015-immutable-audit-chain.md) |
+| `audit_chain` | id=1, last_id, last_hash, updated_at | 链头单行表；与 INSERT 同事务更新，验证以 `audit_log` 行为准、不信任链头 |
+| `file_backups` | id, session_id, turn_id, rel_path, kind, version, backup_rel/backup_sha256, written_sha256, discarded_rel, restore_of, verified_at/restored_at | 版本化备份元数据，`UNIQUE(session_id, rel_path, version)`，见 [ADR-0016](../adr/ADR-0016-versioned-backup-restore.md) |
 | `events` | session_id, turn_id, name, payload_json, trace_id | 审计用，不与 UI 事件混用 |
 | `kv` | key, value_json | 轻量状态、persistent 审批规则 |
 
-SQLite 纪律：单写者连接池、显式事务、幂等迁移；WAL 自动 checkpoint 默认 1000 页（按实测调，高频写入有间歇卡顿风险）；备份用在线接口，不复制打开中的文件。
+SQLite 纪律：单写者连接池、显式事务、幂等迁移；WAL 自动 checkpoint 默认 1000 页（按实测调，高频写入有间歇卡顿风险）；备份用在线接口，不复制打开中的文件。审计追加由进程内互斥 + 单写者事务串行化，避免链头竞态。
 
-**迁移与恢复**：迁移幂等可重试；启动校验 `schema_version`，不匹配拒绝启动并提示升级路径；会话恢复依赖 transcript 重放。
+**迁移与恢复**：迁移幂等可重试（0001→0004）；启动校验 `schema_version`，不匹配拒绝启动并提示升级路径；旧库的审计行没有哈希，验证器计为"遗留未密封"段，首个新行以空前驱开链。会话恢复依赖 transcript 重放。
 
 ## 崩溃恢复（v3 新增）
 
 - 启动时扫描运行态会话（见状态机 `interrupted` 转移），由 transcript 重放标记，UI 引导用户二选一：继续（重放当前 turn）或放弃（标 `cancelled`）。
 - 崩溃时正在执行的工具，副作用**是否已发生不可知**（文件写一半 / API 已发出无响应）：以幂等键在 `tool_calls` 标记"结果未知"，用户检查实际影响后再决定重试或放弃。
-- 备份检查点同理：恢复时列出崩溃前的检查点供用户对照（见 [04](04-security-and-hooks.md) §备份式回滚）。
+- 备份元数据本身就是恢复线索：覆盖写记录在被标记"已校验"之前仍是未确认版本，新建记录在 `written_sha256` 落库前表示"目标文件未确认存在"；启动恢复把中断的工具调用标出后写 `recovery` 审计，GUI 备份面板把这类版本显示为"未完成/未确认"，不提供恢复入口。
+- 完整快照式检查点不存在（Phase 4 是文件级版本备份），恢复时对照 `file_backups` 的版本列表与目标文件当前哈希。
 
 ## 可观测性
 
@@ -145,8 +150,8 @@ SQLite 纪律：单写者连接池、显式事务、幂等迁移；WAL 自动 ch
 |---|---|
 | 实时 UI | 流式文本、工具进度、审批请求；事件驱动，30–50ms 批量 flush |
 | 结构化日志 | session_id / turn_id / tool_ref / match_key / exec_hash / risk / reversible / duration_ms / tokens |
-| 审计表 | events + approvals，事后审计，不替代实时事件 |
-| 追踪 | 同一 trace_id 贯穿 model → tool → MCP → hook |
+| 审计表 | `audit_log`（哈希链、追加只读）+ `approvals` + `tool_calls`；GUI 审计面板可验证整链并导出 JSONL + manifest |
+| 追踪 | 每次运行生成 `trace_id`，与 `turn_id` 一起贯穿 model → tool → MCP → hook → backup |
 
 **流式背压**：逐 token 的 Wails 事件在高频下拖垮 IPC；适配层按 30–50ms 聚合 flush，前端慢消费时合并/丢弃中间 delta、只保留最终状态。
 

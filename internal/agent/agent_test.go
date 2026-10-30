@@ -78,6 +78,14 @@ func (f *fakeProvider) setPhases(phases ...[]model.Chunk) {
 // setScript is a single-phase convenience wrapper.
 func (f *fakeProvider) setScript(script []model.Chunk) { f.setPhases(script) }
 
+// callCount reads the stream counter under the mutex; tests poll it while the
+// actor is streaming.
+func (f *fakeProvider) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
 func (f *fakeProvider) Stream(ctx context.Context, _ []model.Message, _ []model.ToolSpec) <-chan model.Chunk {
 	f.mu.Lock()
 	idx := f.calls
@@ -309,8 +317,9 @@ func TestBoundaryDenialAudited(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListAudit: %v", err)
 	}
-	if len(rows) != 1 || rows[0].Decision != "deny" || rows[0].Action != "read_file" {
-		t.Fatalf("audit rows = %+v, want one read_file deny", rows)
+	if len(rows) != 1 || rows[0].Decision != "deny" || rows[0].Action != "tool_call" ||
+		!strings.Contains(rows[0].Detail, "read_file") {
+		t.Fatalf("audit rows = %+v, want one read_file tool_call deny", rows)
 	}
 	msgs, _ := f.store.Transcript(context.Background(), s.ID())
 	var toolMsg string
@@ -342,7 +351,7 @@ func TestCancelMidStream(t *testing.T) {
 	for time.Now().Before(deadline) && s.State() != StateThinking {
 		time.Sleep(2 * time.Millisecond)
 	}
-	for time.Now().Before(deadline) && f.prov.calls < 1 {
+	for time.Now().Before(deadline) && f.prov.callCount() < 1 {
 		time.Sleep(2 * time.Millisecond)
 	}
 	s.Cancel()
@@ -351,7 +360,7 @@ func TestCancelMidStream(t *testing.T) {
 	if s.State() != StateCancelled {
 		t.Fatalf("state = %s, want cancelled", s.State())
 	}
-	if f.prov.calls < 1 {
+	if f.prov.callCount() < 1 {
 		t.Fatal("provider was never called")
 	}
 }

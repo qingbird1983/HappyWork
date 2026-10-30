@@ -4,6 +4,8 @@ import (
 	"context"
 
 	"github.com/happywork/happywork/internal/agent"
+	"github.com/happywork/happywork/internal/audit"
+	"github.com/happywork/happywork/internal/rollback"
 	"github.com/happywork/happywork/internal/storage"
 )
 
@@ -132,4 +134,34 @@ func (s *SessionService) AppInfo() (AppInfo, error) {
 // Transcript returns the full ordered message list of a session.
 func (s *SessionService) Transcript(sessionID string) ([]storage.Message, error) {
 	return s.mgr.Store().Transcript(context.Background(), sessionID)
+}
+
+// ListAudit returns recent audit rows plus the current chain status.
+func (s *SessionService) ListAudit(sessionID string, limit int) (audit.Page, error) {
+	return s.mgr.ListAudit(context.Background(), sessionID, limit)
+}
+
+// VerifyAudit recomputes the audit hash chain.
+func (s *SessionService) VerifyAudit() (audit.VerifyResult, error) {
+	return s.mgr.VerifyAudit(context.Background())
+}
+
+// ExportAudit writes JSONL + manifest and returns the paths.
+func (s *SessionService) ExportAudit() (audit.ExportResult, error) {
+	return s.mgr.ExportAudit(context.Background())
+}
+
+// ListBackups returns versioned file backups for one session.
+func (s *SessionService) ListBackups(sessionID string) ([]rollback.BackupGroup, error) {
+	return s.mgr.ListBackups(context.Background(), sessionID)
+}
+
+// RestoreBackup restores one backup version after creating a safety copy.
+func (s *SessionService) RestoreBackup(sessionID, backupID string) (rollback.RestoreOutcome, error) {
+	return s.mgr.RestoreBackup(context.Background(), sessionID, backupID)
+}
+
+// UndoCreatedFile moves an unchanged created file into the backup area.
+func (s *SessionService) UndoCreatedFile(sessionID, backupID string) (rollback.RestoreOutcome, error) {
+	return s.mgr.UndoCreatedFile(context.Background(), sessionID, backupID)
 }

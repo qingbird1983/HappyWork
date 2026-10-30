@@ -9,9 +9,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/happywork/happywork/internal/audit"
 	"github.com/happywork/happywork/internal/hook"
 	"github.com/happywork/happywork/internal/model"
 	"github.com/happywork/happywork/internal/permission"
+	"github.com/happywork/happywork/internal/rollback"
 	"github.com/happywork/happywork/internal/storage"
 	"github.com/happywork/happywork/internal/tool"
 	"github.com/happywork/happywork/internal/workspace"
@@ -107,11 +109,11 @@ func (m *Manager) modelName() string {
 // newRegistry builds the per-session tool set bound to the canonical root.
 // Every filesystem tool is bound to this session's root (ADR-0004); writes and
 // oversized results go under the app data dir.
-func (m *Manager) newRegistry(root workspace.Root, sessionID string) *tool.Registry {
+func (m *Manager) newRegistry(root workspace.Root, backups *rollback.Writer) *tool.Registry {
 	reg := tool.NewRegistry()
 	read := tool.NewReadFile(root)
 	list := tool.NewListDir(root)
-	write := tool.NewWriteFile(root, m.dataPath("backups"), sessionID)
+	write := tool.NewWriteFile(root, backups)
 	for _, t := range []tool.Tool{read, list, write} {
 		meta := t.Meta()
 		permission.MustCheckTool(meta.Ref, meta.Action, meta.Reversible)
@@ -123,6 +125,10 @@ func (m *Manager) newRegistry(root workspace.Root, sessionID string) *tool.Regis
 		reg.SetExternal(m.opts.ExternalTools)
 	}
 	return reg
+}
+
+func (m *Manager) backupWriter(root workspace.Root, sessionID string) *rollback.Writer {
+	return rollback.NewWriter(root, m.dataPath("backups"), sessionID, m.store, rollback.DefaultLimits())
 }
 
 // dataPath joins a subdirectory under the app data dir.
@@ -159,9 +165,10 @@ func (m *Manager) CreateSession(ctx context.Context, workspaceRoot string, prese
 	if err := m.store.CreateSession(ctx, &sess); err != nil {
 		return storage.Session{}, fmt.Errorf("agent: create session: %w", err)
 	}
-	// The tool registry is per session: every filesystem tool is bound to
-	// this session's canonical workspace root (ADR-0004).
-	s := newSession(m, sess, root, m.newRegistry(root, sess.ID))
+	// The tool registry and backup writer are per session: every filesystem
+	// tool is bound to this session's canonical workspace root (ADR-0004).
+	backups := m.backupWriter(root, sess.ID)
+	s := newSession(m, sess, root, m.newRegistry(root, backups), backups)
 	m.mu.Lock()
 	m.sessions[sess.ID] = s
 	m.mu.Unlock()
@@ -184,6 +191,71 @@ func (m *Manager) DeleteRule(ctx context.Context, id string) error {
 	return m.store.DeletePermissionRule(ctx, id)
 }
 
+// ListAudit returns recent audit rows plus the global chain status.
+func (m *Manager) ListAudit(ctx context.Context, sessionID string, limit int) (audit.Page, error) {
+	entries, err := m.store.ListAudit(ctx, sessionID, limit)
+	if err != nil {
+		return audit.Page{}, err
+	}
+	all, err := m.store.ListAudit(ctx, sessionID)
+	if err != nil {
+		return audit.Page{}, err
+	}
+	verify, err := m.store.VerifyAudit(ctx)
+	if err != nil {
+		return audit.Page{}, err
+	}
+	return audit.Page{Entries: entries, Verify: verify, Total: len(all)}, nil
+}
+
+// VerifyAudit recomputes the audit hash chain.
+func (m *Manager) VerifyAudit(ctx context.Context) (audit.VerifyResult, error) {
+	return m.store.VerifyAudit(ctx)
+}
+
+// ExportAudit writes JSONL + manifest evidence under the app data dir.
+func (m *Manager) ExportAudit(ctx context.Context) (audit.ExportResult, error) {
+	if m.opts.DataDir == "" {
+		return audit.ExportResult{}, fmt.Errorf("agent: app data directory is unavailable")
+	}
+	rows, err := m.store.ListAudit(ctx, "")
+	if err != nil {
+		return audit.ExportResult{}, err
+	}
+	verify, err := m.store.VerifyAudit(ctx)
+	if err != nil {
+		return audit.ExportResult{}, err
+	}
+	return audit.Export(filepath.Join(m.opts.DataDir, "exports"), rows, verify)
+}
+
+// ListBackups returns version groups for one session.
+func (m *Manager) ListBackups(ctx context.Context, sessionID string) ([]rollback.BackupGroup, error) {
+	s, err := m.GetSession(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	return s.ListBackups(ctx)
+}
+
+// RestoreBackup restores one version after creating a safety copy.
+func (m *Manager) RestoreBackup(ctx context.Context, sessionID, backupID string) (rollback.RestoreOutcome, error) {
+	s, err := m.GetSession(ctx, sessionID)
+	if err != nil {
+		return rollback.RestoreOutcome{}, err
+	}
+	return s.RestoreBackup(ctx, backupID)
+}
+
+// UndoCreatedFile moves an unchanged created file into the backup area.
+func (m *Manager) UndoCreatedFile(ctx context.Context, sessionID, backupID string) (rollback.RestoreOutcome, error) {
+	s, err := m.GetSession(ctx, sessionID)
+	if err != nil {
+		return rollback.RestoreOutcome{}, err
+	}
+	return s.UndoCreatedFile(ctx, backupID)
+}
+
 // GetSession returns the in-memory session; unknown IDs that exist in the
 // store are rehydrated.
 func (m *Manager) GetSession(ctx context.Context, id string) (*Session, error) {
@@ -201,8 +273,8 @@ func (m *Manager) GetSession(ctx context.Context, id string) (*Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("agent: rehydrate workspace: %w", err)
 	}
-	reg := m.newRegistry(root, info.ID)
-	s = newSession(m, info, root, reg)
+	backups := m.backupWriter(root, info.ID)
+	s = newSession(m, info, root, m.newRegistry(root, backups), backups)
 	m.mu.Lock()
 	m.sessions[id] = s
 	m.mu.Unlock()

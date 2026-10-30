@@ -72,7 +72,7 @@ func TestSpecsSchemas(t *testing.T) {
 	reg := NewRegistry()
 	reg.Register(NewReadFile(root))
 	reg.Register(NewListDir(root))
-	reg.Register(NewWriteFile(root, t.TempDir(), "s"))
+	reg.Register(NewWriteFile(root, nil))
 	for _, spec := range reg.Specs() {
 		var v any
 		if err := json.Unmarshal(spec.Parameters, &v); err != nil {

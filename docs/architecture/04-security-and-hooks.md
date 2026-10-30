@@ -87,12 +87,15 @@ WebView 渲染模型输出、工具结果、MCP 返回内容——**都可能是
 
 ## 备份式回滚（取代 v2 完整快照）
 
-> v2 缺陷：文件系统快照跨平台不可行（Windows VSS / APFS 快照需管理员权限 / btrfs 仅特定文件系统），用户态全量复制对大工作区过慢；且同类产品（Codex、Claude Code）均不做快照，靠沙箱 + 审批兜底。**降级为文件级备份**（[ADR-0005](../adr/ADR-0005-mvp-security-downgrade.md)）：
+> v2 缺陷：文件系统快照跨平台不可行（Windows VSS / APFS 快照需管理员权限 / btrfs 仅特定文件系统），用户态全量复制对大工作区过慢；且同类产品（Codex、Claude Code）均不做快照，靠沙箱 + 审批兜底。**降级为文件级备份**（[ADR-0005](../adr/ADR-0005-mvp-security-downgrade.md)），Phase 4 落地为版本化备份（[ADR-0016](../adr/ADR-0016-versioned-backup-restore.md)）：
 
-1. **覆盖写**：写临时文件 + 原子 rename，rename 前保留原文件副本（`.happywork-bak/`，按会话隔离）；
-2. **删除**：一律进 OS 回收站/废纸篓，不直接 unlink；
-3. **git 集成**：工作区是 git 仓库时，回合结束提示可用 git 兜底比对；
-4. 完整快照（增量、跨平台）留 Backlog，立项须 ADR。
+1. **覆盖写**：写入前把当前内容存为版本（数据目录 `backups/<session>/<相对路径>/v%06d-<id>.bak`），再写临时文件 + fsync + 原子 rename；每个 `(会话, 路径)` 保留最近 20 版，备份区软上限 512 MiB，超限**拒绝新的覆盖写并审计**而不是静默丢版本；
+2. **新建文件**：不留备份副本，只登记创建时 SHA-256；"撤销创建"要求当前内容哈希仍等于创建时哈希，然后把文件**移入** `discarded/<相对路径>/<id>.trash` —— 不 unlink；
+3. **恢复**：先把当前内容变成新版本（`pre_restore` 安全副本），再把选定版本复制回目标；恢复本身因此可再撤销；仅非运行态会话可恢复/撤销；
+4. **git 集成**：工作区是 git 仓库时，回合结束提示可用 git 兜底比对；
+5. 完整快照（增量、跨平台）留 Backlog，立项须 ADR。
+
+写后校验失败（重读哈希与预期不符）时按同一语义自动处置：覆盖写回滚到备份版本，新建移入备份区，并记 `backup/verify_fail` 审计。
 
 ## 单实例锁与桌面集成（跨平台修正）
 
@@ -104,13 +107,17 @@ WebView 渲染模型输出、工具结果、MCP 返回内容——**都可能是
 
 ## 审计与操作后校验
 
-- 审计日志**追加只读**，记录动作前后状态与理由；默认 append-only + 定期导出，hash-chain 密封为可选开关（合规需求时开启）——单机桌面做 hash-chain 收益有限。
-- 每个 turn / model call / tool call / approval / hook 共用同一 `trace_id` 全链路。
-- **操作后校验**：工具执行后核对实际效果与预期一致（文件内容、API 只读语义）；异常触发告警并进入回滚流程（可逆操作）。
+- 审计日志**追加只读 + 哈希链常开**（Phase 4，[ADR-0015](../adr/ADR-0015-immutable-audit-chain.md)）：`BEFORE UPDATE/DELETE` 触发器 `RAISE(ABORT)`，链头与写入同事务更新，验证器逐行重算 `prev_hash/entry_hash`，可定位首个坏行；Phase 4 之前的行算"遗留未密封"，UI 如实标注而不是谎称全量可信。威胁模型限定为本地完整性护栏：不防拥有数据库完整写权限并重算整链的攻击者，也无外部锚定。
+- 覆盖范围是**安全事件与元数据**，不是内容副本：工具判定、审批、持久规则、Hook 结果、备份/恢复/撤销、链验证、启动恢复各写审计；只记 `relPath`、哈希、决策与短原因，不写文件正文、提示词或密钥原文。
+- **fail-closed**：放行路径的审计写入失败即拒绝执行工具（拒绝路径仍照常留痕，写失败降级为日志）。
+- 每个 turn 生成一个 `trace_id`，与 `turn_id` 一起贯穿 model → tool → hook → backup 记录；GUI 审计面板可按会话查看链状态、验证整链、导出 JSONL + manifest。
+- **操作后校验**：写文件后重读目标并比对 SHA-256；不一致即自动回滚（覆盖写）或移入备份区（新建），并记 `backup/verify_fail`。外部进程在"备份→写入→重读"窗口内改同一文件会被判为校验失败并回滚，桌面单用户场景接受这一毫秒级风险。
 
-## 应用更新（v3 新增）
+## 应用更新与发布签名（v3 新增，Phase 4 落地）
 
-安全敏感的桌面应用必须有补丁通道：内置"检查更新"（对比 releases manifest）+ 下载页跳转 + **签名验证**（Windows Authenticode / macOS notarization）后才提示安装；**不做静默自动更新**（无人值守安装与产品原则冲突）。
+安全敏感的桌面应用必须有补丁通道：内置"检查更新"（对比 releases manifest）+ 下载页跳转 + **签名验证**后才提示安装；**不做静默自动更新**（无人值守安装与产品原则冲突）。
+
+发布侧由 `.github/workflows/release.yml` 在 annotated tag `v*` 上完成三平台签名（[ADR-0017](../adr/ADR-0017-release-signing.md)）：Windows Authenticode（exe + NSIS 安装包，带 RFC 3161 时间戳）、macOS Developer ID 签名 + 公证 + staple（.app 与 .dmg）、Linux `dpkg-sig`/`rpmsign` 包签名与 AppImage 分离签名。凭据只存 GitHub Actions Secrets，缺凭据的正式标签**直接失败**，不产出未签名发布物；`workflow_dispatch` 的 dry-run 用 runner 内临时凭据自验，产物标签为 `dry-run-preview`，正式 Release job 只下载 `*-release`。最终 `SHA256SUMS` 与其 `.asc` 由 release job 汇总三平台产物后生成，公钥随 Release 一起发布。
 
 ## 测试基线（v3 新增，对应 [standards/05](../standards/05-testing.md)）
 
@@ -120,14 +127,21 @@ WebView 渲染模型输出、工具结果、MCP 返回内容——**都可能是
 | 注入用例集 | Markdown 含 `<script>`、`data:` 链接、symlink/junction 路径逃逸、8.3 短名、大小写变体——全部必须"拒绝且留痕" |
 | TOCTOU 演练 | 审批后改参被 `ErrArgsDrift` 拦截；Hook 白名单外字段改参被拒 |
 | JCS fuzz | canonical JSON 编码一致性模糊测试（浮点/Unicode/嵌套） |
+| 审计链 | 固定哈希向量；改单行/删中间行/插队/空哈希插入/链头不一致均定位首个坏行；UPDATE/DELETE 触发器拒绝；遗留段计数；导出 JSONL 可复算 |
+| 备份与恢复 | 多版本与保留裁剪、软上限拒绝、恢复前安全副本、恢复后再恢复、撤销创建（改过即拒绝、缺失幂等）、运行态拒绝、越界/敏感路径拒绝 |
+| 写后校验 | 故障注入使重读哈希不符 → 覆盖写自动回滚 / 新建移入备份区，并审计 `backup/verify_fail` |
+| 审计 fail-closed | 审计写入失败时放行路径被拒绝，拒绝路径仍留痕 |
 | 崩溃恢复 | 写入中途被杀后数据可读/可恢复（standards/05 §2.4） |
+| 发布流水线 | `v*` 标签三平台签名/验签；dry-run 用临时凭据走同一命令；缺凭据的正式标签失败；版本一致性门禁（配置 + 生成资产） |
 
 ## 风险与待决
 
 | 风险 | 对策 |
 |---|---|
 | 无沙箱期（Phase 1–4）本地破坏 | 权限 + 审批 + 备份三重兜底；shell/删除默认 deny |
-| 备份目录本身膨胀 | 按会话隔离 + 会话结束提示清理 + 容量上限 |
+| 备份目录本身膨胀 | 每 `(会话, 路径)` 保留 20 版 + 备份区 512 MiB 软上限；超限拒绝新的覆盖写并审计，不静默丢版本；跨会话清理留后续 |
+| 备份元数据丢失 | `file_backups` 被删时磁盘版本文件成为孤儿；本阶段不扫描备份目录重建，需人工按路径找回 |
+| 真实签名凭据 | A7 条件项：没有证书/公证账号时 dry-run 只证明流水线可用，不得表述为"已签名发布" |
 | CSP `style-src 'unsafe-inline'` | 已知妥协；Phase 2 后评估移除（样式预处理成本） |
 | Hook 共享地址空间逃逸 | 进程内 Hook 仅白名单来源 + 签名（TOFU 指纹）；外部进程形态立项后隔离 |
 

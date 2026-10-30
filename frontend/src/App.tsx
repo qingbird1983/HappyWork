@@ -14,6 +14,7 @@ import { SafeText } from "./render";
 import { ApprovalDialog, type ApprovalScope } from "./components/ApprovalDialog";
 import { PausedBanner } from "./components/PausedBanner";
 import { InterruptedBanner } from "./components/InterruptedBanner";
+import { SecurityPanel } from "./components/SecurityPanel";
 import { SessionSidebar, STATE_LABELS } from "./components/SessionSidebar";
 import { ToolBlock } from "./components/ToolBlock";
 import {
@@ -40,6 +41,7 @@ export default function App() {
   const [paused, setPaused] = useState<Record<string, PausedPayload>>({});
   const [notices, setNotices] = useState<Record<string, NoticePayload>>({});
   const [usage, setUsage] = useState<Record<string, UsagePayload>>({});
+  const [showSecurity, setShowSecurity] = useState(false);
 
   const currentIdRef = useRef("");
   useEffect(() => {
@@ -403,6 +405,13 @@ export default function App() {
             {currentSession && (
               <span className="preset-current">预设 {currentSession.preset || "default"}</span>
             )}
+            <button
+              className="security-toggle"
+              disabled={!currentId}
+              onClick={() => setShowSecurity((v) => !v)}
+            >
+              审计 / 备份
+            </button>
           </>
         )}
         {currentUsage && (
@@ -534,6 +543,16 @@ export default function App() {
             </div>
           </div>
         </main>
+
+        {showSecurity && currentId && (
+          <SecurityPanel
+            key={currentId}
+            sessionId={currentId}
+            busy={busy}
+            onClose={() => setShowSecurity(false)}
+            onNotice={notice}
+          />
+        )}
       </div>
 
       {currentApproval && (

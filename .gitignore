@@ -42,6 +42,7 @@ bin/
 
 # --- Wails 构建产物 ---
 build/bin/
+build/ios/
 .task/
 frontend/bindings/
 

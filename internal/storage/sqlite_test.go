@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/happywork/happywork/internal/audit"
+	"github.com/happywork/happywork/internal/rollback"
 	"github.com/happywork/happywork/migrations"
 )
 
@@ -120,7 +122,10 @@ func TestAuditAndEvents(t *testing.T) {
 	if err := s.CreateSession(ctx, &Session{ID: "s1", WorkspaceRoot: "ws"}); err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
-	if err := s.AppendAudit(ctx, "s1", "read_file", "deny", "outside workspace"); err != nil {
+	if err := s.AppendAudit(ctx, audit.Record{
+		SessionID: "s1", Action: "read_file", Decision: "deny",
+		Reason: "outside workspace", Detail: `{"toolRef":"builtin://read_file"}`,
+	}); err != nil {
 		t.Fatalf("AppendAudit: %v", err)
 	}
 	if err := s.AppendEvent(ctx, "s1", "session:state", `{"state":"idle"}`); err != nil {
@@ -310,8 +315,8 @@ func TestMigrationUpgradeFromPhase2(t *testing.T) {
 		t.Fatalf("upgrade open: %v", err)
 	}
 	defer func() { _ = s.Close() }()
-	if v, _ := s.KVGet(context.Background(), schemaVersionKey); v != "3" {
-		t.Fatalf("schema version = %q, want 3", v)
+	if v, _ := s.KVGet(context.Background(), schemaVersionKey); v != "4" {
+		t.Fatalf("schema version = %q, want 4", v)
 	}
 	sess, err := s.GetSession(context.Background(), "p2")
 	if err != nil || sess.Preset != "default" {
@@ -383,8 +388,8 @@ func TestMigrationUpgradeFromPhase1(t *testing.T) {
 		t.Fatalf("upgrade open: %v", err)
 	}
 	defer func() { _ = s.Close() }()
-	if v, _ := s.KVGet(context.Background(), schemaVersionKey); v != "3" {
-		t.Fatalf("schema version = %q, want 3", v)
+	if v, _ := s.KVGet(context.Background(), schemaVersionKey); v != "4" {
+		t.Fatalf("schema version = %q, want 4", v)
 	}
 	old, err := s.GetSession(context.Background(), "old")
 	if err != nil {
@@ -396,5 +401,177 @@ func TestMigrationUpgradeFromPhase1(t *testing.T) {
 	// The new table must be usable.
 	if err := s.AppendApproval(context.Background(), &Approval{SessionID: "old", ToolRef: "x", Level: "confirm", Decision: "allow", Scope: "once"}); err != nil {
 		t.Fatalf("approvals table unusable after upgrade: %v", err)
+	}
+}
+
+func TestAuditChainAndTriggers(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		if err := s.AppendAudit(ctx, audit.Record{
+			SessionID: "s1", TurnID: int64(i + 1), TraceID: "tr",
+			Action: audit.ActionToolCall, Decision: audit.DecisionAllow,
+			Reason: "allowed", Detail: `{"toolRef":"builtin://read_file"}`,
+		}); err != nil {
+			t.Fatalf("AppendAudit %d: %v", i, err)
+		}
+	}
+	rows, err := s.ListAudit(ctx, "s1")
+	if err != nil || len(rows) != 3 {
+		t.Fatalf("ListAudit = %+v, %v", rows, err)
+	}
+	for i, row := range rows {
+		if row.EntryHash == "" || len(row.EntryHash) != 64 {
+			t.Fatalf("row %d hash = %q", i, row.EntryHash)
+		}
+		if i > 0 && row.PrevHash != rows[i-1].EntryHash {
+			t.Fatalf("row %d prev does not link", i)
+		}
+	}
+	limited, err := s.ListAudit(ctx, "s1", 2)
+	if err != nil || len(limited) != 2 || limited[0].ID != rows[1].ID {
+		t.Fatalf("limited list = %+v, %v", limited, err)
+	}
+	verify, err := s.VerifyAudit(ctx)
+	if err != nil || !verify.OK || verify.SealedRows != 3 {
+		t.Fatalf("VerifyAudit = %+v, %v", verify, err)
+	}
+	db := s.(*sqliteStore).db
+	if _, err := db.ExecContext(ctx, `UPDATE audit_log SET reason = 'tampered' WHERE id = ?`, rows[0].ID); err == nil {
+		t.Fatal("audit UPDATE should be blocked")
+	}
+	if _, err := db.ExecContext(ctx, `DELETE FROM audit_log WHERE id = ?`, rows[0].ID); err == nil {
+		t.Fatal("audit DELETE should be blocked")
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO audit_log (session_id, action, decision, reason, created_at, prev_hash, entry_hash)
+		 VALUES ('s1', 'x', 'deny', 'x', 't', 'bad-prev', 'bad-hash')`); err == nil {
+		t.Fatal("insert with wrong prev should be blocked")
+	}
+}
+
+func TestPhase4MigrationLegacyAudit(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "phase3.db")
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stmts, err := migrations.Ordered()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		if _, err := raw.Exec(stmts[i].SQL); err != nil {
+			t.Fatalf("apply migration %d: %v", i, err)
+		}
+	}
+	if _, err := raw.Exec(`INSERT INTO kv (key, value) VALUES (?, '3')`, schemaVersionKey); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`INSERT INTO sessions (id, workspace_root, state, created_at, updated_at)
+		VALUES ('p3', 'ws', 'completed', 't', 't')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`INSERT INTO audit_log (session_id, action, decision, reason, created_at)
+		VALUES ('p3', 'legacy_tool', 'deny', 'old row', 't')`); err != nil {
+		t.Fatal(err)
+	}
+	_ = raw.Close()
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("upgrade open: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+	ctx := context.Background()
+	if v, _ := s.KVGet(ctx, schemaVersionKey); v != "4" {
+		t.Fatalf("schema version = %q, want 4", v)
+	}
+	legacy, err := s.ListAudit(ctx, "p3")
+	if err != nil || len(legacy) != 1 || legacy[0].EntryHash != "" {
+		t.Fatalf("legacy audit = %+v, %v", legacy, err)
+	}
+	verify, err := s.VerifyAudit(ctx)
+	if err != nil || !verify.OK || verify.LegacyRows != 1 || verify.SealedRows != 0 {
+		t.Fatalf("legacy verify = %+v, %v", verify, err)
+	}
+	if err := s.AppendAudit(ctx, audit.Record{
+		SessionID: "p3", Action: audit.ActionToolCall, Decision: audit.DecisionDeny, Reason: "new row",
+	}); err != nil {
+		t.Fatalf("seal after legacy: %v", err)
+	}
+	verify, err = s.VerifyAudit(ctx)
+	if err != nil || !verify.OK || verify.LegacyRows != 1 || verify.SealedRows != 1 {
+		t.Fatalf("post-legacy verify = %+v, %v", verify, err)
+	}
+	if _, err := s.(*sqliteStore).db.ExecContext(ctx, `UPDATE audit_log SET reason = 'x' WHERE id = ?`, legacy[0].ID); err == nil {
+		t.Fatal("legacy audit UPDATE should be blocked too")
+	}
+}
+
+func TestFileBackupRoundtrip(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	if err := s.CreateSession(ctx, &Session{ID: "s1", WorkspaceRoot: "ws"}); err != nil {
+		t.Fatal(err)
+	}
+	b := rollback.Backup{
+		SessionID: "s1", TurnID: 2, RelPath: "docs/a.md", Kind: rollback.KindOverwrite,
+		Reason: rollback.ReasonWrite, Version: 1, Mode: 0o600, Size: 12,
+		BackupRel: "s1/docs/a.md/v1.bak", BackupSHA256: "backup-hash", WrittenSHA256: "written-hash",
+	}
+	if err := s.CreateFileBackup(ctx, &b); err != nil {
+		t.Fatalf("CreateFileBackup: %v", err)
+	}
+	if b.ID == "" {
+		t.Fatal("backup id not assigned")
+	}
+	got, err := s.GetFileBackup(ctx, b.ID)
+	if err != nil || got.Mode != 0o600 || got.BackupRel != b.BackupRel || got.Size != 12 {
+		t.Fatalf("GetFileBackup = %+v, %v", got, err)
+	}
+	if v, err := s.LatestFileBackupVersion(ctx, "s1", "docs/a.md"); err != nil || v != 1 {
+		t.Fatalf("latest = %d, %v", v, err)
+	}
+	if usage, err := s.BackupUsage(ctx); err != nil || usage != 12 {
+		t.Fatalf("usage = %d, %v", usage, err)
+	}
+	if err := s.UpdateFileBackupWritten(ctx, b.ID, "new-written", "t1"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.GetFileBackup(ctx, b.ID)
+	if got.WrittenSHA256 != "new-written" || got.VerifiedAt != "t1" {
+		t.Fatalf("written update = %+v", got)
+	}
+	if err := s.MarkFileBackupRestored(ctx, b.ID, "s1/discarded/a.md/x.trash", "t2"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.GetFileBackup(ctx, b.ID)
+	if got.DiscardedRel == "" || got.RestoredAt != "t2" {
+		t.Fatalf("restore update = %+v", got)
+	}
+	create := rollback.Backup{
+		SessionID: "s1", RelPath: "new.txt", Kind: rollback.KindCreate,
+		Reason: rollback.ReasonWrite, Version: 1, WrittenSHA256: "abc", Size: 3,
+	}
+	if err := s.CreateFileBackup(ctx, &create); err != nil {
+		t.Fatal(err)
+	}
+	if usage, _ := s.BackupUsage(ctx); usage != 12 {
+		t.Fatalf("create record counted in usage: %d", usage)
+	}
+	list, err := s.ListFileBackups(ctx, "s1")
+	if err != nil || len(list) != 2 {
+		t.Fatalf("list = %+v, %v", list, err)
+	}
+	if err := s.DeleteFileBackup(ctx, create.ID); err != nil {
+		t.Fatal(err)
+	}
+	if list, _ := s.ListFileBackups(ctx, "s1"); len(list) != 1 {
+		t.Fatalf("delete failed: %+v", list)
 	}
 }

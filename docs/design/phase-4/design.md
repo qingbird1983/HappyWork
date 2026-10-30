@@ -36,27 +36,30 @@
 
 ```
 internal/audit/
-  record.go       Record、规范字段、Hash
-  verify.go       流式验证、VerifyResult、Export（JSONL + manifest）
-  kinds.go        action/decision 常量（tool_call/approval/backup/...）
+  audit.go        Record、规范字段、Hash、action/decision 常量（叶子包）
+  verify.go       流式验证、VerifyResult、Page
+  export.go       JSONL + manifest 导出
 internal/rollback/
+  rollback.go     Backup/BackupGroup、Store 接口、Limits、WriteOutcome/RestoreOutcome、WithTurn
+  files.go        原子复制/写、SHA-256、跨卷移动、裁剪与容量
   writer.go       覆盖/新建写入、版本、写后校验、自动回滚
   restore.go      恢复、撤销创建、路径复核
-  store.go        RecordStore 接口、Limits、裁剪与容量
 internal/storage/
-  audit.go        链式 AppendAudit、ListAudit、VerifyAudit
-  backups.go      file_backups CRUD 与 usage
-  sqlite.go       迁移后装配、触发器
+  storage.go      Store 接口（审计/备份方法）+ 类型别名
+  sqlite.go       链式 AppendAudit、ListAudit、VerifyAudit、file_backups CRUD
 internal/agent/
   audit.go        审计 helper（trace/turn、fail-closed 放行）
-  exec.go         判定/审批/规则/备份审计接线
+  exec.go         判定/规则/备份审计接线与执行链路
+  approval.go     审批对话构造、审批与持久规则审计（askApproval 自 exec.go 拆出以守 600 行）
   manager.go      rollback.Writer 构造与桌面 API 入口
 internal/desktop/
   service.go      审计/备份服务方法
 frontend/src/components/
-  AuditPanel.tsx  最近事件、链状态、验证、导出
+  AuditPanel.tsx  链状态、破损横幅、验证、导出、事件表
   BackupsPanel.tsx 文件/版本、恢复、撤销
+  SecurityPanel.tsx 两面板的抽屉容器
 migrations/0004_phase4.sql
+scripts/check-version.sh
 .github/workflows/release.yml
 ```
 
@@ -293,16 +296,18 @@ CREATE INDEX idx_file_backups_session ON file_backups (session_id, created_at);
 ### 6.2 桌面 API
 
 ```go
-ListAudit(sessionID string, limit int) (AuditPage, error)
-VerifyAudit() (AuditVerify, error)
-ExportAudit() (AuditExport, error)
-ListBackups(sessionID string) ([]BackupGroup, error)
-RestoreBackup(sessionID, backupID string) (BackupRestore, error)
-UndoCreatedFile(sessionID, backupID string) (BackupRestore, error)
+ListAudit(sessionID string, limit int) (audit.Page, error)
+VerifyAudit() (audit.VerifyResult, error)
+ExportAudit() (audit.ExportResult, error)
+ListBackups(sessionID string) ([]rollback.BackupGroup, error)
+RestoreBackup(sessionID, backupID string) (rollback.RestoreOutcome, error)
+UndoCreatedFile(sessionID, backupID string) (rollback.RestoreOutcome, error)
 ```
 
-- `AuditPage` 含最近 N 条（默认 100，上限 500）与当前验证结果；`AuditVerify` 见 §4.4；`AuditExport` 含 jsonl/manifest 路径与结果。
-- `BackupGroup` 按 `rel_path` 聚合版本；`BackupRestore` 含 restored/created、sha256、是否自动回滚、提示。
+绑定方法直接返回 `audit`/`rollback` 的结构体（JSON 标签为小驼峰），不再在 `desktop` 里复制一层 DTO；`audit.Page` 含 `entries/verify/total`，`audit.ExportResult` 含 `jsonlPath/manifestPath/rows/verify`，`rollback.RestoreOutcome` 含 `backupId/relPath/restored/created/alreadyAbsent/safetyBackupId/sha256`。
+
+- `Page` 含最近 N 条（默认 100，上限 500）与当前验证结果；`VerifyResult` 见 §4.4；`ExportResult` 含 jsonl/manifest 路径与结果。
+- `BackupGroup` 按 `rel_path` 聚合版本；`RestoreOutcome` 含 restored/created、sha256 与安全副本 ID。
 - 恢复/撤销审计由 `agent.Manager` 写，trace 新生成；错误返回中文可读文本。
 
 ### 6.3 前端

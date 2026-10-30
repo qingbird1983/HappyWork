@@ -56,6 +56,81 @@ export interface PermissionRule {
   useCount: number;
 }
 
+// Phase 4 audit and backup wire types (internal/audit, internal/rollback).
+export interface AuditRecord {
+  id: number;
+  sessionId: string;
+  turnId: number;
+  traceId: string;
+  action: string;
+  decision: string;
+  reason: string;
+  detail: string;
+  createdAt: string;
+  prevHash: string;
+  entryHash: string;
+}
+
+export interface AuditVerify {
+  ok: boolean;
+  sealedRows: number;
+  legacyRows: number;
+  firstSealedId?: number;
+  lastId: number;
+  headHash: string;
+  brokenId?: number;
+  brokenReason?: string;
+  headMatch: boolean;
+}
+
+export interface AuditPage {
+  entries: AuditRecord[];
+  verify: AuditVerify;
+  total: number;
+}
+
+export interface AuditExport {
+  jsonlPath: string;
+  manifestPath: string;
+  rows: number;
+  verify: AuditVerify;
+}
+
+export interface FileBackup {
+  id: string;
+  sessionId: string;
+  turnId: number;
+  relPath: string;
+  kind: "overwrite" | "create";
+  reason: string;
+  version: number;
+  mode: number;
+  size: number;
+  backupRel?: string;
+  backupSha256?: string;
+  writtenSha256?: string;
+  discardedRel?: string;
+  restoreOf?: string;
+  createdAt: string;
+  verifiedAt?: string;
+  restoredAt?: string;
+}
+
+export interface BackupGroup {
+  relPath: string;
+  backups: FileBackup[];
+}
+
+export interface BackupRestore {
+  backupId: string;
+  relPath: string;
+  restored: boolean;
+  created?: boolean;
+  alreadyAbsent?: boolean;
+  safetyBackupId?: string;
+  sha256?: string;
+}
+
 // Event payloads (internal/agent/types.go).
 export interface StatePayload {
   sessionID: string;
