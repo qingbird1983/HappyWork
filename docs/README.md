@@ -38,8 +38,11 @@ docs/
 |---|---|---|
 | roadmap/00-roadmap.md | 定稿 | 总路线图、唯一进度看板、backlog 与风险登记簿 |
 | roadmap/phase-1-minimal-skeleton.md | 定稿 | Phase 1 范围合同：最小骨架的做/不做与验收场景 |
+| roadmap/phase-2-controlled-execution.md | 定稿 | Phase 2 范围合同：受控执行闭环的做/不做与 A1~A8 验收 |
 | design/phase-1/design.md | 定稿 | Phase 1 施工设计：模块切片、事件契约、数据模型、mock Provider 剧本、依赖清单 |
 | design/phase-1/report.md | 定稿 | Phase 1 验收报告：A1~A7 逐条证据、偏差与遗留、缺陷修复记录 |
+| design/phase-2/design.md | 定稿 | Phase 2 施工设计：Actor 状态机、审批、工具管道、DeepSeek、迁移、预算、恢复、渲染安全 |
+| design/phase-2/mcp.md | 定稿 | Phase 2 MCP stdio 设计：双代协议、配置、生命周期、schema 白名单、安全与测试 |
 | standards/01 ~ 09 | 定稿 | 仓库结构 / git 工作流 / 文档 / 代码 / 测试 / 安全 / AI 协作 / 体量 / 规范复查（01/04/05 已按本项目回填） |
 | glossary.md | 草稿 | 术语表（面向非技术读者） |
 | research/01-v2-design-review.md | 定稿 | v2 设计简报评审：4 类发现与外部事实核实，V3 修订依据 |
@@ -55,6 +58,7 @@ docs/
 | adr/ADR-0008-deepseek-test-provider.md | 定稿 | 开发期真机测试 Provider 采用 DeepSeek（key 走环境变量） |
 | adr/ADR-0009-zcode-ui-reference.md | 定稿 | 前端信息结构以 ZCode 为参照物（只读结构不搬代码） |
 | adr/ADR-0010-sqlite-driver.md | 定稿 | SQLite 驱动采用 modernc.org/sqlite（纯 Go 免 CGO，保三平台构建） |
+| adr/ADR-0011-mcp-dual-era-stdio.md | 定稿 | MCP stdio 同时兼容 2026-07-28（无握手）与旧版 initialize |
 | architecture/01-overview.md | 定稿 | 定位与边界、六层架构、包依赖、代码骨架、阶段映射 |
 | architecture/02-core-loop-and-data.md | 定稿 | 会话 Actor、完整状态机、预算、上下文窗口管理、数据模型、崩溃恢复 |
 | architecture/03-permission-and-approval.md | 定稿 | 单一权限模型、四维审批、双指纹、路径规范化管线、工具映射表 |

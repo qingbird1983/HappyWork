@@ -70,3 +70,4 @@
 | typescript / vite / @vitejs/plugin-react | 5.x / 8.x / 6.x | 前端开发工具链 | ADR-0007 门禁（tsc）与构建依赖 | 各自社区（活跃） | webpack：配置面大，灰盒期无必要；TS 7 因 typescript-eslint 尚未支持而暂缓 |
 | eslint + typescript-eslint + eslint-plugin-react-hooks | 10.x / 8.x / 7.x | 前端静态检查 | CI 门禁（standards/01） | 各自社区（活跃） | biome：生态尚浅 |
 | prettier | 3.x | 前端格式化 | CI 门禁 | prettier 社区（活跃） | dprint：小众 |
+| vitest | 最新稳定主线（引入时确认版本） | 前端安全渲染断言（React 服务端渲染，Phase 2 A6） | 需要可重复验证"注入内容只作文本"；与 Vite 同栈 | Vitest 团队（活跃） | node:test + 自建 TSX 转译：步骤多、易与构建链漂移 |
