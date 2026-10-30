@@ -40,6 +40,7 @@ docs/
 | roadmap/phase-1-minimal-skeleton.md | 定稿 | Phase 1 范围合同：最小骨架的做/不做与验收场景 |
 | roadmap/phase-2-controlled-execution.md | 定稿 | Phase 2 范围合同：受控执行闭环的做/不做与 A1~A8 验收 |
 | roadmap/phase-3-permission-engine-and-hooks.md | 定稿 | Phase 3 范围合同：权限引擎、持久规则、TOCTOU、Hook 的做/不做与 A1~A8 验收 |
+| roadmap/phase-4-audit-rollback-signing.md | 定稿 | Phase 4 范围合同：不可变审计、备份式回滚、三平台签名 CI 的做/不做与 A1~A8 验收 |
 | design/phase-1/design.md | 定稿 | Phase 1 施工设计：模块切片、事件契约、数据模型、mock Provider 剧本、依赖清单 |
 | design/phase-1/report.md | 定稿 | Phase 1 验收报告：A1~A7 逐条证据、偏差与遗留、缺陷修复记录 |
 | design/phase-2/design.md | 定稿 | Phase 2 施工设计：Actor 状态机、审批、工具管道、DeepSeek、迁移、预算、恢复、渲染安全 |
@@ -48,6 +49,8 @@ docs/
 | design/phase-3/design.md | 定稿 | Phase 3 施工设计：权限引擎、预设、持久规则、限额、execHash/TOCTOU、迁移与前端 |
 | design/phase-3/hooks.md | 定稿 | Phase 3 Hook 设计：编译期内置、五个 Hook 点、严格配置、改参白名单与失败策略 |
 | design/phase-3/report.md | 定稿 | Phase 3 验收报告：A1~A8 证据、真机记录、发现缺陷与遗留 |
+| design/phase-4/design.md | 定稿 | Phase 4 施工设计：审计链、备份版本/恢复/写后校验、迁移 0004、API/UI 与测试 |
+| design/phase-4/release-signing.md | 定稿 | Phase 4 发布签名设计：三平台签名、公证、dry-run、凭据卫生与验签 |
 | standards/01 ~ 09 | 定稿 | 仓库结构 / git 工作流 / 文档 / 代码 / 测试 / 安全 / AI 协作 / 体量 / 规范复查（01/04/05 已按本项目回填） |
 | glossary.md | 草稿 | 术语表（面向非技术读者） |
 | research/01-v2-design-review.md | 定稿 | v2 设计简报评审：4 类发现与外部事实核实，V3 修订依据 |
@@ -67,6 +70,9 @@ docs/
 | adr/ADR-0012-jcs-implementation.md | 定稿 | execHash 的 JCS 采用 RFC 8785 参考实现 + I-JSON 前置校验 |
 | adr/ADR-0013-hook-trust-model.md | 定稿 | Phase 3 Hook 只允许编译期内置，签名/TOFU 延后 |
 | adr/ADR-0014-content-trust-scope.md | 定稿 | 内容信任级作为条件维度，不并入 matchKey |
+| adr/ADR-0015-immutable-audit-chain.md | 定稿 | 审计默认哈希链密封、追加只读、无外部锚定与本地威胁模型 |
+| adr/ADR-0016-versioned-backup-restore.md | 定稿 | 备份版本化、恢复可再撤销、新建可撤销、保留与容量 |
+| adr/ADR-0017-release-signing.md | 定稿 | 发布物三平台签名、`v*` 触发、dry-run 与真实凭据条件验收 |
 | architecture/01-overview.md | 定稿 | 定位与边界、六层架构、包依赖、代码骨架、阶段映射 |
 | architecture/02-core-loop-and-data.md | 定稿 | 会话 Actor、完整状态机、预算、上下文窗口管理、数据模型、崩溃恢复 |
 | architecture/03-permission-and-approval.md | 定稿 | 单一权限模型、四维审批、双指纹、路径规范化管线、工具映射表 |

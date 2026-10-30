@@ -24,7 +24,7 @@ graph LR
 | [Phase 1](phase-1-minimal-skeleton.md) | 最小骨架：Wails 壳 + SQLite + mock 模型 + 只读工具 + 单实例锁 | 1~2 周 | ✅ 完成（2026-10-30，tag `phase-1.end`；[报告](../design/phase-1/report.md)） |
 | [Phase 2](phase-2-controlled-execution.md) | 受控执行闭环：Actor 状态机 + DeepSeek + 本地工具 + MCP stdio + 审批交互 + 渲染安全 | 2~3 周 | ✅ 完成（2026-10-30，tag `phase-2.end`；[报告](../design/phase-2/report.md)） |
 | [Phase 3](phase-3-permission-engine-and-hooks.md) | 权限引擎（映射表/双指纹/路径规范化）+ 进程内 Hook + TOCTOU 管道 | 2 周 | ✅ 完成（2026-10-30，tag `phase-3.end`；[报告](../design/phase-3/report.md)） |
-| Phase 4 | 加固 a：不可变审计 + 备份式回滚 + 三平台签名 CI | 2 周 | 未开始 |
+| [Phase 4](phase-4-audit-rollback-signing.md) | 加固 a：不可变审计 + 备份式回滚 + 三平台签名 CI | 2 周 | 进行中（2026-10-30 立项放行） |
 | Phase 5 | 加固 b：OS 沙箱（macOS Seatbelt + Linux Landlock） | 3~6 周 | 未开始 |
 
 \* 单人参考值，仅量级感知。状态取值：未开始 / 进行中 / ✅ 完成（日期 + tag）。
@@ -59,5 +59,8 @@ graph LR
 | 无沙箱期（Phase 1–4）本地破坏 | 中 | 权限 + 审批 + 备份三重兜底；shell/删除默认 deny（ADR-0005） |
 | MCP 返回恶意 schema / 子进程僵尸 | 中 | schema 白名单 + 生命周期管理 + 重启上限 |
 | SQLite 损坏 / 双实例 | 中 | 单写者 + WAL + 在线备份 + 单实例锁 |
+| 审计链无外部锚定 | 中 | 明示为本地完整性护栏（防误改/局部篡改）；合规/对抗需求另立 ADR |
+| 备份区膨胀 | 中 | 每文件 20 版 + 512 MiB 软上限；超限拒绝新备份并提示清理（ADR-0016） |
+| 发布签名凭据缺失 | 中 | 三平台 dry-run 验流水线；真实签名 A7 条件项；未签名产物不发布（ADR-0017） |
 | 上下文超窗导致长会话失败 | 中 | 组装预算 + 分级折叠（architecture/02 §上下文窗口管理） |
 | Linux webkitgtk 分发依赖 | 低 | Phase 1 验证三平台打包；AppImage/deb 评估 |
