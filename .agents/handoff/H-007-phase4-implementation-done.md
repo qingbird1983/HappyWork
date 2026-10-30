@@ -28,7 +28,7 @@ Phase 4（不可变审计 + 备份式回滚 + 三平台签名 CI）实现完成�
 - P-013 审计证据写入工作区绝对路径，本机（Windows）测不出、Linux CI 才红：匹配键被小写化 + JSON 双层转义，字节精确的 `Contains` 断言失效。已改为源头相对化 + 归一化比较。
 - 另修：`internal/agent/exec.go` 超 600 行 → 拆 `approval.go`；测试脚手架 `fakeProvider.calls` 无锁读 → `-race` 全绿。
 - P-014 SQLite pragma 按连接生效而池子无上限 + "查最大值再插入"跨调用 → 并发下 `database is locked (517/5)` 与 `UNIQUE(session_id, seq)`；修法是 `SetMaxOpenConns(1)` + 序号/版本在事务内分配（`internal/storage/sqlite_write.go`），并发回归测试 `sqlite_contention_test.go`。
-- 远端 CI 首跑 `41094526014`：`build (windows/macos/ubuntu)` 三 job 通过，`check` 因 P-013 失败；复跑 `41096410911` 三 job 仍通过，`check` 因 P-014 失败。两处修复已推，A8 需要第三次 CI 绿作为证据。
+- 远端 CI：首跑 `41094526014` 与复跑 `41096410911` 都只红在 `check`（依次是 P-013 路径泄漏、P-014 存储并发），第三次 `41098214658` **全绿**（`check` + windows/ubuntu/macos 三个 build）。看板 A8 还要求 `release.yml` dry-run 绿，即 A6。
 
 ## 快速恢复上下文
 

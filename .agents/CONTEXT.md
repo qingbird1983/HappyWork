@@ -7,7 +7,7 @@
 - **Phase 1 ✅ 完成（tag `phase-1.end`）**
 - **Phase 2 ✅ 完成（tag `phase-2.end`）**：8/8 验收，报告定稿，main CI 绿。
 - **Phase 3 ✅ 完成（tag `phase-3.end`）**：A1~A8 通过；CI run 41066195833 全绿；报告 [docs/design/phase-3/report.md](../docs/design/phase-3/report.md)。
-- **Phase 4 实现完成（本地门禁全绿，A1~A4 自动化通过；A5/A6/A7/A8 未闭合）**：迁移 0004、`internal/audit`、`internal/rollback`、agent/tool/desktop 接线、审计/备份面板、`release.yml` + `scripts/check-version.sh` 全部落位。报告（草稿）见 [docs/design/phase-4/report.md](../docs/design/phase-4/report.md)。
+- **Phase 4 实现完成（本地门禁 + 远端 `ci.yml` 全绿；A1~A4 自动化通过，A8 仅差 release dry-run）**：迁移 0004、`internal/audit`、`internal/rollback`、agent/tool/desktop 接线、审计/备份面板、`release.yml` + `scripts/check-version.sh` 全部落位。报告（草稿）见 [docs/design/phase-4/report.md](../docs/design/phase-4/report.md)。
 - 分支：`feat/phase4-audit-rollback-signing`（所有者已签收推送；尚未合并 main，等 A5/A6/A8）；main 常绿。
 - 所有者决定（2026-10-31）：**暂不打 `v*` 标签、不发版**——UI 细设计打磨未完成；首发平台 **Windows 优先**，macOS/Linux 只保证"可构建 + 可签名 + 可验签"，不保证首发打磨度。
 
@@ -25,7 +25,7 @@
 
 1. **A5 真机验收（所有者）**：隔离 `APPDATA` 下跑 `bin/happywork.exe` —— 写文件审批 → 审计面板链状态/验证/导出 → 备份面板版本列表、恢复（确认二次提示与安全副本）、撤销创建 → 运行中尝试恢复看 `ErrBusy` 提示。
 2. **A6 远端 dry-run（分支已推送）**：手动触发 `Release` workflow（`workflow_dispatch`，一律 dry-run、不发布）；按日志修 `choco install nsis`、`dpkg-sig`/`rpm --checksig` 行为、AppImage 文件名等首次实跑问题。三平台全绿才算 A6 通过。
-3. **A8 收尾**：远端 CI 第三次复跑确认全绿（前两轮分别红在 P-013 路径泄漏、P-014 存储并发，两处都已修 + 回归测试）→ 报告定稿 → 签收 → 合并 main → tag `phase-4.end`；看板与 CHANGELOG 收口。**不打 `v*` 标签**（发版另排）。
+3. **A8 收尾**：`ci.yml` 第三次复跑已全绿（run `41098214658`：`check` + 三平台 `build`）；看板上的 A8 还要求 `release.yml` dry-run 绿（= A6）。之后报告定稿 → 签收 → 合并 main → tag `phase-4.end`；看板与 CHANGELOG 收口。**不打 `v*` 标签**（发版另排）。
 4. **A7 条件项（随首发排期主动延后）**：所有者提供 Windows PFX、Apple Developer ID/公证、Linux GPG 私钥与 Key ID 后配成 GitHub Secrets，补跑正式签名并回填证书主体/指纹证据；届时 macOS/Linux 只验收"可构建 + 可签名 + 可验签"。
 5. 可选真机补录（Phase 3 遗留）：持久短语与 secret-scan 的 GUI 提交（宿主安全分类器限制，集成测试已覆盖）。
 6. UI 细设计与打磨（含审计/备份面板灰盒样式）按所有者决定排在发版之前，Phase 4 不强行收尾。

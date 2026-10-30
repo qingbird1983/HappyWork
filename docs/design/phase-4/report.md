@@ -1,6 +1,6 @@
 # Phase 4 验收报告：不可变审计 + 备份式回滚 + 三平台签名 CI
 
-- 状态：实现完成，本地门禁全绿，分支已推送；A5 真机与 A6 远端 dry-run 待执行；`v*` 发版按所有者决定另排
+- 状态：实现完成，本地门禁与远端 `ci.yml` 全绿（run `41098214658`）；A5 真机与 A6 远端 dry-run 待执行；`v*` 发版按所有者决定另排
 - 日期：2026-10-30
 - 范围合同：[phase-4-audit-rollback-signing.md](../../roadmap/phase-4-audit-rollback-signing.md)
 - 设计与决策：[design.md](design.md)、[release-signing.md](release-signing.md)、[ADR-0015](../../adr/ADR-0015-immutable-audit-chain.md)、[ADR-0016](../../adr/ADR-0016-versioned-backup-restore.md)、[ADR-0017](../../adr/ADR-0017-release-signing.md)
@@ -28,7 +28,7 @@
 | A5 UI/API | 部分：自动化通过，真机待验 | 前端 `render.test.tsx` 21 用例全绿，含新增审计/备份面板注入用例（恶意 `decision` 只能落到 `other` 类名、路径与原因转义、破损横幅显示首个坏行、运行中恢复按钮 `disabled`、二次确认文案）；`npm run lint/typecheck/format:check/test:unit/build` 全绿，App.tsx 568 行（<600）。**待所有者真机验收**：面板打开、链状态与导出文件、恢复/撤销交互与运行中提示 |
 | A6 签名 dry-run | 待远端执行 | `release.yml` 已实现且通过 YAML 解析（5 个 job）；命令与任务名以本机 `wails3 task --list-all`、`wails3 tool sign -help`、Wails v3.0.0 `internal/commands/sign.go` 为准。**必须在推送后由 `workflow_dispatch` 实跑**：三平台构建 + 临时凭据签名 + 验签全绿才算通过；本次提交前无法给出运行证据，故不标注为通过 |
 | A7 真实签名（条件） | 未执行（条件遗留） | 需要所有者提供 Windows Authenticode 证书、Apple Developer ID + 公证账号、Linux GPG 私钥与密钥 ID 并配置为 GitHub Actions Secrets。未提供前只记"条件未执行"，不伪造证据 |
-| A8 门禁 | 本地全绿，远端待 CI | 见 §3 |
+| A8 门禁 | 部分：`ci.yml` 全绿（run `41098214658`：`check` + 三平台 `build`）；`release.yml` dry-run 尚未跑 | 见 §3。看板上的 A8 还包含"release dry-run CI 全绿"，因此要等 A6 手动触发并三平台绿了才能勾掉 |
 
 ## 3. 本地门禁结果（2026-10-30）
 
@@ -43,7 +43,7 @@
 | 前端 | `npm run lint` / `typecheck` / `format:check` / `test:unit` / `build` | 全绿；21 用例通过；产物 `dist/assets/index-*.js` 270.31 kB |
 | 版本门禁 | `bash scripts/check-version.sh v0.0.1` | 通过；`v9.9.9` 与 `phase-4.end` 分别按预期失败（退出码 1 与 2） |
 | 桌面构建 | `wails3 build`（Windows 本机） | 通过，产物 `bin/happywork.exe`；三平台 `wails3 build` 由 CI 矩阵覆盖 |
-| 远端 CI | `ci.yml` run `41094526014`、`41096410911`（分支 `feat/phase4-audit-rollback-signing`） | 两次首跑都只红在 `check`，三平台 `build` job 均通过。第一次：审计导出含工作区绝对路径（§4.8，P-013）；第二次：`AppendAudit`/备份写入在并发下报 `database is locked`（§4.9，P-014）。两处都已修复并补回归测试，待第三次复跑确认 |
+| 远端 CI | `ci.yml` runs `41094526014`、`41096410911`、`41098214658`（分支 `feat/phase4-audit-rollback-signing`） | 前两次都只红在 `check`，三平台 `build` job 均通过：第一次审计导出含工作区绝对路径（§4.8，P-013），第二次 `database is locked`（§4.9，P-014）。第三次 run `41098214658` **全绿**：`check` + `build (windows/ubuntu/macos)` 四个 job 全部 success |
 
 ## 4. 实现期间的发现与处置
 
