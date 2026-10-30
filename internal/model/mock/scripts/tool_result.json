@@ -1,0 +1,9 @@
+{
+  "steps": [
+    {
+      "kind": "say_tool_echo",
+      "template": "已读取 {path}（{size_bytes} 字节，截断：{truncated}），内容如下：\n{content}",
+      "chunk_words": 6
+    }
+  ]
+}

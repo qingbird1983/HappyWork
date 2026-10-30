@@ -1,6 +1,6 @@
-# CI —— 门禁流水线（Go + 前端 TS；命令与 docs/standards/04 §1、05 §1 保持一致）
-# 门禁组合固定四连：格式化检查 / lint / 测试 / check-size（体量哨兵）。
-# Pre-code 阶段（go.mod 未落地）：Go 步骤以守卫条件跳过，check-size 始终执行。
+# CI —— 门禁流水线（Go + 前端 TS + 三平台构建；命令与 docs/standards/04 §1、05 §1 保持一致）
+# 门禁组合：gofmt / golangci-lint / go test / 前端 lint+typecheck / check-size（体量哨兵）。
+# Phase 1 验收 A1（一票否决）：windows/macos/linux 三平台 wails3 build 矩阵。
 
 name: CI
 
@@ -20,7 +20,7 @@ jobs:
         with:
           go-version: ">=1.26"
 
-      # ── 门禁四连 ──────────────────────────────────────────
+      # ── Go 门禁 ──────────────────────────────────────────
       - name: fmt（格式化检查）
         run: |
           if [ -f go.mod ]; then
@@ -28,26 +28,51 @@ jobs:
           else
             echo "skip: go.mod not present (pre-code phase)"
           fi
-      - name: lint（硬门槛）
-        run: |
-          if [ -f go.mod ]; then
-            go vet ./...
-          else
-            echo "skip: go.mod not present (pre-code phase)"
-          fi
+      - name: lint（golangci-lint，standards/01 硬门槛）
+        if: hashFiles('go.mod') != ''
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
       - name: test
-        run: |
-          if [ -f go.mod ]; then
-            go test ./...
-          else
-            echo "skip: go.mod not present (pre-code phase)"
-          fi
-      - name: frontend lint & typecheck（React + TS，ADR-0007）
-        run: |
-          if [ -f frontend/package.json ]; then
-            cd frontend && npm ci && npm run lint && npm run typecheck
-          else
-            echo "skip: frontend/package.json not present (pre-code phase)"
-          fi
-      - name: check-size（体量哨兵）
+        if: hashFiles('go.mod') != ''
+        run: go test ./...
+
+      # ── 前端门禁（ADR-0007）─────────────────────────────
+      - name: frontend lint & typecheck（React + TS）
+        if: hashFiles('frontend/package.json') != ''
+        run: cd frontend && npm ci && npm run lint && npm run typecheck
+
+      # ── 体量哨兵 ────────────────────────────────────────
+      - name: check-size
         run: bash scripts/check-size
+
+  # A1 三平台构建（roadmap phase-1 §5）。Linux webkitgtk 环境允许首期失败
+  # 显式标红（design/phase-1 §14 风险），修复后移除 continue-on-error。
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+          - os: macos-latest
+          - os: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.os == 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ">=1.26"
+
+      - name: 安装 Linux webkitgtk 依赖（Wails 运行时）
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      - name: 安装 wails3 CLI（钉 v3.0.0，ADR-0001）
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
+
+      - name: wails3 build
+        run: "$(go env GOPATH)/bin/wails3 build"

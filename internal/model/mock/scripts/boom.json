@@ -1,0 +1,13 @@
+{
+  "steps": [
+    {
+      "kind": "say",
+      "text": "马上就要出错了，注意观察错误分支。",
+      "chunk_words": 3
+    },
+    {
+      "kind": "fail",
+      "message": "mock: 模拟的流中途失败"
+    }
+  ]
+}

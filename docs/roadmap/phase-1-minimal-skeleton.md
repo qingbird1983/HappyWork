@@ -38,7 +38,7 @@
 |---|---|
 | 代码 | `cmd/agent/`、`internal/{desktop,agent,model,tool,storage,singleinst}/`、`frontend/`、`migrations/` |
 | 文档 | `docs/design/phase-1/` 设计稿；`report.md` 阶段进度报告 |
-| 其他 | 三平台构建脚本；`fixtures/`（mock provider 脚本样例） |
+| 其他 | 三平台构建脚本；mock 剧本内嵌 `internal/model/mock/scripts/`（原定根级 fixtures/ 并入，见 design/phase-1 §3） |
 
 ## 5. 验收场景（逐条可执行；验收结果记入 report.md）
 

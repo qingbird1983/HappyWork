@@ -32,11 +32,11 @@ internal/model/mock/         脚本化确定性 Provider（读 fixtures/）
 internal/tool/               工具注册表 + read_file 实现 + ToolMeta
 internal/workspace/          工作区根 + 路径规范化管线 + 边界判定（ADR-0004；Phase 3 收编入权限引擎）
 internal/storage/            SQLite 打开/迁移/会话与消息存取（驱动引入点唯一文件）
-internal/audit/              审计写入（Phase 1 仅 append 行，不可篡改机制在 Phase 4）
 internal/singleinst/         单实例锁 + 聚焦通道（flock + named pipe/AF_UNIX）
 migrations/                  0001_init.sql + embed 入口（迁移幂等）
-frontend/                    React+TS 灰壳：三栏信息结构 + CSP
-fixtures/mock/*.json         mock Provider 剧本样例
+frontend/                    React+TS 灰壳：三栏信息结构 + CSP；frontend/embed.go 以
+                             //go:embed all:dist 内嵌产物（embed 不能跨目录，故置于此前端包）
+internal/model/mock/scripts/ mock 剧本 JSON（embed 进二进制；原定的根级 fixtures/ 并入此处）
 ```
 
 依赖方向遵循 architecture/01：`desktop → agent → {model, tool, storage, audit}`；`tool → workspace`；无反向、无环。Wails 类型不越过 `internal/desktop`。
@@ -46,7 +46,7 @@ fixtures/mock/*.json         mock Provider 剧本样例
 | 表 | 关键列 | 说明 |
 |---|---|---|
 | sessions | id TEXT PK；title；workspace_root；state；created_at/updated_at | state 取状态机子集枚举 |
-| messages | id TEXT PK；session_id FK；seq；role CHECK(user/assistant/tool/system)；content；UNIQUE(session_id,seq) | transcript 重放依据（A3） |
+| messages | id TEXT PK；session_id FK；seq；role CHECK(user/assistant/tool/system)；content；tool_call_id；tool_name；tool_calls_json；UNIQUE(session_id,seq) | transcript 重放依据（A3）；tool 列供回喂与未来 Provider 恢复 |
 | tool_calls | id TEXT PK；session_id FK；name；args_json；result_json；status | Phase 1 只写不读（Phase 2 起展示） |
 | audit_log | 自增 PK；session_id；action；decision；reason；created_at | 越界拒绝等留痕（A5） |
 | events | 自增 PK；session_id；type；payload_json；created_at | 事件流水（观测与排查） |
@@ -107,7 +107,7 @@ type Provider interface {
 }
 ```
 
-Mock 实现：构造时给定**剧本**（`fixtures/mock/*.json`），每次 `Stream` 消费下一段剧本；分片按固定 cadence（默认每 10ms 一片）发送，可注入加速用于测试。剧本段类型：
+Mock 实现：剧本内嵌于二进制（`internal/model/mock/scripts/*.json`），每次 `Stream` 从头重放所选剧本；分片按固定 cadence（`chunk_words`，可注入延迟）发送。**选择规则**：上一条消息是工具结果时固定用 `tool_result` 剧本（复述结果、结束回合——避免工具剧本重放导致调用死循环）；否则按用户文本关键词选剧本。剧本段类型：
 
 | 段类型 | 字段 | 用途 |
 |---|---|---|
@@ -116,7 +116,7 @@ Mock 实现：构造时给定**剧本**（`fixtures/mock/*.json`），每次 `St
 | say_tool_echo | template | 读取 msgs 中最近 tool 结果并按模板复述（验证回喂链路） |
 | fail | message | 流中途报错（error 分支） |
 
-内置剧本（fixtures/mock/）：`greet`（问候）、`read_file`（call_tool → say_tool_echo，A2/A5 主链路）、`long`（300 片，验证批量 flush 无逐片卡顿）、`boom`（中途失败）。会话默认剧本可配置（kv 表 `mock.script`），缺省 greet。
+内置剧本：`greet`（问候）、`read_file`（say → call_tool，路径占位符 `$USER_PATH` 取自用户文本）、`tool_result`（say_tool_echo 收尾）、`long`（repeat×30 ≈ 数百分片，验证批量 flush）、`boom`（中途失败）。关键词映射见 `DefaultSelector`：boom / long / read_file·读取 / 缺省 greet；`-mock-script` 旗标可强制指定。
 
 ## 8. read_file 与工作区边界
 
@@ -130,7 +130,7 @@ Mock 实现：构造时给定**剧本**（`fixtures/mock/*.json`），每次 `St
 ## 9. 单实例锁与聚焦
 
 - 锁：`os.UserConfigDir()/happywork/single.lock`，`gofrs/flock` 独占持有，进程存活期不释放。
-- 聚焦通道：主实例监听——Windows 命名管道 `\\.\pipe\happywork-focus`；其余平台 `configDir/happywork/focus.sock`（AF_UNIX）。第二实例获锁失败 → 向通道写 `focus` → 主实例 `FocusMainWindow()` → 第二实例退出（A4）。
+- 聚焦通道（**施工修正**）：聚焦请求文件 + 低频轮询——第二实例获锁失败 → 写 `configDir/happywork/focus.req` → 主实例每 400ms 轮询感知 → `FocusMainWindow()` → 第二实例退出（A4）。放弃命名管道/AF_UNIX 的原因：stdlib `net` 不支持监听 Windows 命名管道（其 "pipe" 网络是内存管道 net.Pipe），为此引入 go-winio 依赖或 TCP 环回端口都不值当（亚秒延迟预算足够）；architecture/04 §单实例锁已同步。
 - 聚焦实现走 `internal/desktop` 的 Platform 接口（architecture/02），锁包本身不依赖 Wails。
 
 ## 10. 前端壳（灰盒）
@@ -190,10 +190,11 @@ npm 开发：`typescript`、`vite`、`@vitejs/plugin-react`、`eslint`、`@eslin
 | 风险 | 缓解 |
 |---|---|
 | wails v3.0.0 API 与研究时点记忆有偏差 | 一切以 `wails3 init` 生成模板与官方文档为准；差异收敛在 internal/desktop |
-| Windows 命名管道 stdlib 支持异常 | 备选：聚焦通道降级为锁文件心跳 + 轮询（记录 pitfalls） |
+| ~~Windows 命名管道 stdlib 支持异常~~ | 已发生并按备选落地：聚焦通道 = 请求文件 + 400ms 轮询（pitfalls P-002） |
 | webkitgtk CI 环境缺失 | linux job 允许首期显式标红驱动修复；打包方式本阶段评估 |
 | `Call.ByName` 字符串拼写错误无编译期检查 | 服务方法名集中定义在一个 TS 常量文件 |
 
 ## 更新记录
 
 - 2026-10-30：定稿。
+- 2026-10-30：施工同步——聚焦通道改为请求文件+轮询（stdlib 不支持命名管道监听）；mock 剧本内嵌并增加 tool_result 分支与关键词选择器；messages 表补 tool 列；根级 fixtures/ 并入 internal/model/mock/scripts/。

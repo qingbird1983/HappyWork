@@ -35,6 +35,13 @@ for ext in "${SOURCE_EXTS[@]}"; do
   name_args+=(-name "*.${ext}" -o)
 done
 unset 'name_args[${#name_args[@]}-1]'   # 去掉末尾 -o
+# 生成物与第三方代码不计入体量（它们不进 git；见仓库 .gitignore）
+PRUNE_PATHS=(node_modules dist bindings .task)
+prune_args=()
+for p in "${PRUNE_PATHS[@]}"; do
+  prune_args+=(-path "*/${p}/*" -o)
+done
+unset 'prune_args[${#prune_args[@]}-1]'
 for dir in "${SRC_DIRS[@]}"; do
   [ -d "$dir" ] || continue
   while IFS= read -r f; do
@@ -42,7 +49,7 @@ for dir in "${SRC_DIRS[@]}"; do
     if [ "$lines" -gt "$MAX_SOURCE_LINES" ]; then
       fail "源文件超限: $f (${lines} > ${MAX_SOURCE_LINES} 行) —— 拆分或按 standards/08 §4 登记豁免"
     fi
-  done < <(find "$dir" -type f \( "${name_args[@]}" \) 2>/dev/null)
+  done < <(find "$dir" -type f \( "${prune_args[@]}" \) -prune -o -type f \( "${name_args[@]}" \) -print 2>/dev/null)
 done
 
 # 2) docs 单篇行数（design 目录用 500 上限；其余 300；模板文件跳过）

@@ -100,7 +100,7 @@ WebView 渲染模型输出、工具结果、MCP 返回内容——**都可能是
 
 - 锁文件路径统一 `os.UserConfigDir()/happywork/instance.lock`；
 - 锁原语用 `gofrs/flock`（Windows 底层 `LockFileEx`，POSIX `flock`）；
-- 第二实例检测到锁 → 通过命名管道（Windows）/ Unix domain socket（macOS/Linux）通知第一实例聚焦窗口 → 自身退出。
+- 第二实例检测到锁 → 通知第一实例聚焦窗口 → 自身退出。聚焦通道实现：聚焦请求文件 + 低频轮询（Phase 1 实测 stdlib `net` 不支持监听 Windows 命名管道——`net` 的 "pipe" 是内存管道，见 pitfalls P-002 与 design/phase-1 §9；若未来延迟不达标再评估 go-winio 依赖）。
 
 ## 审计与操作后校验
 
