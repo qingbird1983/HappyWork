@@ -17,7 +17,7 @@ Phase 4（不可变审计 + 备份式回滚 + 三平台签名 CI）实现完成�
 ## 未完成 / 下一步
 
 1. A5 真机：所有者在隔离 `APPDATA` 验面板（链状态、导出、恢复二次确认、撤销创建、运行中拒绝）。
-2. 已提交并推送 → 等 CI 绿 → 手动触发 `Release`（`workflow_dispatch`，一律 dry-run、不发布）拿 A6 证据；首跑大概率要按日志修 NSIS 安装、AppImage 文件名、`dpkg-sig`/`rpmsign` 行为。
+2. `ci.yml` 已全绿（run `41098214658`、文档轮 `41098824262`）。**A6 无法在本分支触发**：`gh workflow run release.yml --ref feat/...` 报 404，GitHub 的 `workflow_dispatch` 只认默认分支上存在的 workflow（P-015）。取证顺序需所有者定：合并 main 后再 dispatch（首跑要按日志修 NSIS 安装、AppImage 文件名、`dpkg-sig`/`rpmsign` 行为，修复走后续 fix 分支），或整项延到 UI 打磨之后。
 3. A7 需真实凭据（Windows PFX、Apple Developer ID + 公证、Linux GPG 私钥/Key ID）→ GitHub Secrets；按所有者决定随首发排期主动延后，没有凭据就记"条件未执行"，不得发布未签名产物。
 4. A8 闭合后报告转定稿、看板勾 A5~A8、合并 main、tag `phase-4.end`（阶段结束 tag，不是 `v*` 发布标签）。
 

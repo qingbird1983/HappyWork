@@ -16,6 +16,7 @@
 
 - **正式发布**：推送 annotated tag `vX.Y.Z`（如 `v0.1.0`），`release.yml` 触发；tag 去掉 `v` 必须等于 `build/config.yml` 的 `info.version`，否则 `prepare` 失败。
 - **dry-run**：手动 `workflow_dispatch` 触发。没有标签就没有"正式"语义，因此 dispatch 一律是 dry-run：构建/临时凭据签名/验签，产物标签为 `dry-run-preview`，`release` job 不运行。用于 A6。
+- **触发前提**：`workflow_dispatch` 只承认**默认分支上存在**的 workflow 文件，`--ref` 指向 feature 分支会返回 `404 workflow not found on the default branch`。所以 A6 的证据只能在 `release.yml` 合入 main 之后取得；在此之前本流水线的任何命令、任务名与产物名都只有本机依据，没有远端运行证据（P-015）。
 - **阶段标签**（`phase-N.end`）不触发发布。
 - 版本号变更流程：更新 `build/config.yml` + `CHANGELOG.md` → `wails3 task common:update:build-assets` 重新生成资产 → 提交 → 打 tag；tag 与配置文件不一致即失败，不做自动改写。
 - 版本门禁由 `scripts/check-version.sh` 执行：除比较 `build/config.yml`，还要确认 `build/windows/info.json`、`build/windows/nsis/wails_tools.nsh`、`build/linux/nfpm/nfpm.yaml`、`build/darwin/Info.plist` 都写了同一版本。Phase 4 立项时这些生成物仍带着 `wails3 init` 模板值（`happywork.exe`、"My Company"、0.1.0），与配置里的 0.0.1 不一致；只校验配置会让发布物自报错误版本。

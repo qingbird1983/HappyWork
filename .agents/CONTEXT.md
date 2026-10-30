@@ -7,7 +7,7 @@
 - **Phase 1 ✅ 完成（tag `phase-1.end`）**
 - **Phase 2 ✅ 完成（tag `phase-2.end`）**：8/8 验收，报告定稿，main CI 绿。
 - **Phase 3 ✅ 完成（tag `phase-3.end`）**：A1~A8 通过；CI run 41066195833 全绿；报告 [docs/design/phase-3/report.md](../docs/design/phase-3/report.md)。
-- **Phase 4 实现完成（本地门禁 + 远端 `ci.yml` 全绿；A1~A4 自动化通过，A8 仅差 release dry-run）**：迁移 0004、`internal/audit`、`internal/rollback`、agent/tool/desktop 接线、审计/备份面板、`release.yml` + `scripts/check-version.sh` 全部落位。报告（草稿）见 [docs/design/phase-4/report.md](../docs/design/phase-4/report.md)。
+- **Phase 4 实现完成（本地门禁 + 远端 `ci.yml` 全绿：run `41098214658`、文档轮 `41098824262`）**：迁移 0004、`internal/audit`、`internal/rollback`、agent/tool/desktop 接线、审计/备份面板、`release.yml` + `scripts/check-version.sh` 全部落位。A5 真机待验，A6 因 workflow 未落地默认分支而阻塞（P-015）。报告（草稿）见 [docs/design/phase-4/report.md](../docs/design/phase-4/report.md)。
 - 分支：`feat/phase4-audit-rollback-signing`（所有者已签收推送；尚未合并 main，等 A5/A6/A8）；main 常绿。
 - 所有者决定（2026-10-31）：**暂不打 `v*` 标签、不发版**——UI 细设计打磨未完成；首发平台 **Windows 优先**，macOS/Linux 只保证"可构建 + 可签名 + 可验签"，不保证首发打磨度。
 
@@ -24,7 +24,7 @@
 ## 下一步（按优先级，注明阻塞项）
 
 1. **A5 真机验收（所有者）**：隔离 `APPDATA` 下跑 `bin/happywork.exe` —— 写文件审批 → 审计面板链状态/验证/导出 → 备份面板版本列表、恢复（确认二次提示与安全副本）、撤销创建 → 运行中尝试恢复看 `ErrBusy` 提示。
-2. **A6 远端 dry-run（分支已推送）**：手动触发 `Release` workflow（`workflow_dispatch`，一律 dry-run、不发布）；按日志修 `choco install nsis`、`dpkg-sig`/`rpm --checksig` 行为、AppImage 文件名等首次实跑问题。三平台全绿才算 A6 通过。
+2. **A6 远端 dry-run（阻塞：需先在默认分支落地）**：`gh workflow run release.yml --ref feat/...` 返回 404——GitHub 只为默认分支上存在的 workflow 注册手动触发入口（P-015）。所以 A6 取证必须排在合并 main 之后：在 main 上 dispatch，三平台 job 全绿才算通过，首跑要按日志修 `choco install nsis`、`dpkg-sig`/`rpm --checksig` 行为、AppImage 文件名，修复走后续 fix 分支。dry-run 不发布、不打标签。
 3. **A8 收尾**：`ci.yml` 第三次复跑已全绿（run `41098214658`：`check` + 三平台 `build`）；看板上的 A8 还要求 `release.yml` dry-run 绿（= A6）。之后报告定稿 → 签收 → 合并 main → tag `phase-4.end`；看板与 CHANGELOG 收口。**不打 `v*` 标签**（发版另排）。
 4. **A7 条件项（随首发排期主动延后）**：所有者提供 Windows PFX、Apple Developer ID/公证、Linux GPG 私钥与 Key ID 后配成 GitHub Secrets，补跑正式签名并回填证书主体/指纹证据；届时 macOS/Linux 只验收"可构建 + 可签名 + 可验签"。
 5. 可选真机补录（Phase 3 遗留）：持久短语与 secret-scan 的 GUI 提交（宿主安全分类器限制，集成测试已覆盖）。
@@ -32,6 +32,7 @@
 
 ## 未决问题
 
+- **A6 与"签收后合并 main"的顺序死锁**：dry-run 需要 `release.yml` 在 main 上，而收尾流程要求签收后才合并。待所有者二选一：① `ci.yml` 绿 + A5 签收后先合并 main，再在 main 上 dispatch dry-run，问题用后续 fix 分支修（dry-run 无破坏性）；② A5/A6 全部延到 UI 打磨之后一起收。未经签收不合并。
 - A6 从未在远端实跑过：workflow 的命令/任务名/产物名都对着本机 Wails v3.0.0 与 `wails3 task --list-all`、`wails3 tool sign -help` 校验过，但 NSIS/AppImage/linuxdeploy 的实际产物命名仍需首跑确认。
 - 真实签名凭据是否存在（A7 阻塞项）。
 - 审计链威胁模型已写进 UI 与文档：本地完整性护栏，不防全权限重算，无外部锚定。

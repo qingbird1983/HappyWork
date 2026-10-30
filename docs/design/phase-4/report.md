@@ -1,6 +1,6 @@
 # Phase 4 验收报告：不可变审计 + 备份式回滚 + 三平台签名 CI
 
-- 状态：实现完成，本地门禁与远端 `ci.yml` 全绿（run `41098214658`）；A5 真机与 A6 远端 dry-run 待执行；`v*` 发版按所有者决定另排
+- 状态：实现完成，本地门禁与远端 `ci.yml` 全绿（run `41098214658`、文档轮 `41098824262`）；A5 真机待验，A6 因 workflow 未落地默认分支而**受阻**（P-015）；`v*` 发版按所有者决定另排
 - 日期：2026-10-30
 - 范围合同：[phase-4-audit-rollback-signing.md](../../roadmap/phase-4-audit-rollback-signing.md)
 - 设计与决策：[design.md](design.md)、[release-signing.md](release-signing.md)、[ADR-0015](../../adr/ADR-0015-immutable-audit-chain.md)、[ADR-0016](../../adr/ADR-0016-versioned-backup-restore.md)、[ADR-0017](../../adr/ADR-0017-release-signing.md)
@@ -26,9 +26,9 @@
 | A3 备份版本与恢复 | 通过（自动化 + 会话级集成） | `TestWriteCreateOverwriteVersions`、`TestWriteRetentionPrunes`、`TestWriteQuotaRefusesOverwrite`、`TestRestoreCreatesSafetyCopyAndCanBeUndone`、`TestRestoreRecreatesDeletedFile`、`TestFileBackupRoundtrip`；新增 `TestPhase4RestoreFlowWithSafetyCopy`（恢复→安全副本→再恢复回 v2，两次 `backup/restore` 审计）、`TestPhase4RestoreRejectedWhileRunning`（运行中 `ErrBusy`，空闲后成功） |
 | A4 新建撤销与写后校验 | 通过（自动化） | `TestUndoCreate`、`TestUndoCreateRejectsModified`、`TestPhase4UndoCreatedFileMovesToBackupArea`（撤销后工作区文件消失、内容在 `backups/<session>/discarded/...trash` 可读、审计 `backup/undo_create`）、`TestVerifyFailureRollsBack`、`TestVerifyFailureOnCreateDiscards`（故障注入自动回滚/移入备份区并审计 `backup/verify_fail`）、`TestWriteRejectsSensitiveAndTraversal` |
 | A5 UI/API | 部分：自动化通过，真机待验 | 前端 `render.test.tsx` 21 用例全绿，含新增审计/备份面板注入用例（恶意 `decision` 只能落到 `other` 类名、路径与原因转义、破损横幅显示首个坏行、运行中恢复按钮 `disabled`、二次确认文案）；`npm run lint/typecheck/format:check/test:unit/build` 全绿，App.tsx 568 行（<600）。**待所有者真机验收**：面板打开、链状态与导出文件、恢复/撤销交互与运行中提示 |
-| A6 签名 dry-run | 待远端执行 | `release.yml` 已实现且通过 YAML 解析（5 个 job）；命令与任务名以本机 `wails3 task --list-all`、`wails3 tool sign -help`、Wails v3.0.0 `internal/commands/sign.go` 为准。**必须在推送后由 `workflow_dispatch` 实跑**：三平台构建 + 临时凭据签名 + 验签全绿才算通过；本次提交前无法给出运行证据，故不标注为通过 |
+| A6 签名 dry-run | **阻塞**：workflow 尚未在默认分支落地 | `release.yml` 已实现且通过 YAML 解析（5 个 job），但 `gh workflow run release.yml --ref feat/phase4-audit-rollback-signing` 返回 `404 workflow not found on the default branch`，`gh workflow list --all` 里也没有 `Release`——GitHub 的 `workflow_dispatch` 只承认**默认分支上存在**的 workflow 文件，`--ref` 不能引用 feature 分支的流水线定义（P-015）。因此 A6 的取证时机必须排在合并 main 之后；命令与任务名仍以本机 `wails3 task --list-all`、`wails3 tool sign -help`、Wails v3.0.0 `internal/commands/sign.go` 为准，dry-run 永不产出 Release。本次提交前没有任何远端运行证据，故不标注为通过 |
 | A7 真实签名（条件） | 未执行（条件遗留） | 需要所有者提供 Windows Authenticode 证书、Apple Developer ID + 公证账号、Linux GPG 私钥与密钥 ID 并配置为 GitHub Actions Secrets。未提供前只记"条件未执行"，不伪造证据 |
-| A8 门禁 | 部分：`ci.yml` 全绿（run `41098214658`：`check` + 三平台 `build`）；`release.yml` dry-run 尚未跑 | 见 §3。看板上的 A8 还包含"release dry-run CI 全绿"，因此要等 A6 手动触发并三平台绿了才能勾掉 |
+| A8 门禁 | 部分：`ci.yml` 全绿（run `41098214658`：`check` + 三平台 `build`）；`release.yml` dry-run 无法触发 | 见 §3。看板上的 A8 还包含"release dry-run CI 全绿"，受 A6 同一条默认分支限制（P-015），要等合并 main 后手动触发并三平台绿了才能勾掉 |
 
 ## 3. 本地门禁结果（2026-10-30）
 
@@ -61,7 +61,7 @@
 ## 5. 遗留与后续
 
 - **A5 真机验收**：所有者在隔离 `APPDATA` 下走一遍——写文件审批→审计面板看链状态→导出 JSONL/manifest→备份面板恢复与撤销创建→运行中尝试恢复看提示。
-- **A6 远端 dry-run**：分支已推送，手动触发 `Release` workflow，三平台 job 全绿才算通过；首次实跑大概率要按日志微调（`choco install nsis`、`dpkg-sig` 行为、AppImage 文件名大小写）。dry-run 产物只标 `dry-run-preview`，不构成发布。
+- **A6 远端 dry-run**：只能在 `release.yml` 落到默认分支后触发（GitHub 限制，见 P-015），因此取证时机排在合并 main 之后；三平台 job 全绿才算通过，首次实跑大概率要按日志微调（`choco install nsis`、`dpkg-sig` 行为、AppImage 文件名大小写），这些修复走后续 fix 分支。dry-run 产物只标 `dry-run-preview`，`release` job 条件为 push 事件，手动触发永远不构成发布。
 - **发版排期（所有者 2026-10-31 决定）**：UI 细设计与打磨未完成，本期**不打 `v*` 标签、不发版**；首发平台 Windows 优先，macOS/Linux 的验收标准只是"可构建、可签名、可验签"，不承诺首发打磨度。
 - **A7 真实签名**：随上面的排期决定主动延后；等凭据到位后补跑并回填证据（证书主体、GPG 指纹）。
 - **不自动改写构建资产**：`check-version.sh` 只检测不修复，版本变更必须是一次显式提交。
