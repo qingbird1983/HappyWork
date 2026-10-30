@@ -27,6 +27,9 @@ type Meta struct {
 	Destructive bool            // MCP config marked it destructive (block level)
 	Reversible  bool
 	RetrySafe   bool
+	// PatchableFields lists the top-level argument fields a before_tool_call
+	// hook may rewrite (hooks.md §5). Everything else is read-only.
+	PatchableFields []string
 }
 
 // Tool is one executable tool. Exec receives canonical JSON arguments and

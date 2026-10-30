@@ -6,6 +6,7 @@ export interface Session {
   title: string;
   workspaceRoot: string;
   modelId?: string;
+  preset?: string;
   state: string;
   createdAt: string;
   updatedAt: string;
@@ -32,6 +33,27 @@ export interface AppInfo {
   dataDestination: string;
   mcpServers: number;
   mcpError?: string;
+  hooksFingerprint?: string;
+  hooksError?: string;
+  presetsError?: string;
+}
+
+export interface PresetInfo {
+  name: string;
+  description: string;
+  persistentAllowed: boolean;
+}
+
+export interface PermissionRule {
+  id: string;
+  toolRef: string;
+  action: string;
+  matchKey: string;
+  decision: string;
+  note: string;
+  createdAt: string;
+  lastUsedAt: string;
+  useCount: number;
 }
 
 // Event payloads (internal/agent/types.go).
@@ -64,7 +86,7 @@ export interface ApprovalField {
   value: string;
 }
 export interface ApprovalOption {
-  scope: "once" | "session";
+  scope: "once" | "session" | "persistent";
   label: string;
   description: string;
 }
@@ -82,6 +104,11 @@ export interface ApprovalPayload {
   scopeOptions: ApprovalOption[];
   source: string;
   reversible: boolean;
+  contentTrust?: "trusted" | "untrusted";
+  trustWarning?: string;
+  quotaNotice?: string;
+  warnings?: string[];
+  preset?: string;
   expiresAt: string;
 }
 export interface ApprovalResolvedPayload {
@@ -107,4 +134,20 @@ export interface UsagePayload {
   totalTokens: number;
   costUSD: number;
   estimated: boolean;
+}
+
+// session:permission carries the engine verdict for every tool call.
+export interface PermissionPayload {
+  sessionID: string;
+  toolRef: string;
+  name: string;
+  action: string;
+  decision: "allow" | "ask" | "deny";
+  scope?: string;
+  reason: string;
+  auto: boolean;
+  quotaExceeded: boolean;
+  contentTrust: "trusted" | "untrusted";
+  grantedBy?: string;
+  preset: string;
 }

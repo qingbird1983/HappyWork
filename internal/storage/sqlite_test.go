@@ -184,6 +184,149 @@ func TestPhase2ColumnsRoundtrip(t *testing.T) {
 	}
 }
 
+func TestPhase3ColumnsRoundtrip(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	sess := Session{ID: "s3", WorkspaceRoot: "ws", Preset: "readonly"}
+	if err := s.CreateSession(ctx, &sess); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetSession(ctx, "s3")
+	if err != nil || got.Preset != "readonly" {
+		t.Fatalf("preset roundtrip: %+v, %v", got, err)
+	}
+	tc := ToolCallRecord{
+		ID: "tc3", SessionID: "s3", Name: "write_file", ToolRef: "builtin://write_file",
+		ArgsJSON: `{"path":"a.txt"}`, Status: "running", ExecHash: "abc",
+	}
+	if err := s.AppendToolCall(ctx, &tc); err != nil {
+		t.Fatal(err)
+	}
+	var execHash string
+	if err := s.(*sqliteStore).db.QueryRowContext(ctx,
+		`SELECT exec_hash FROM tool_calls WHERE id = ?`, tc.ID).Scan(&execHash); err != nil {
+		t.Fatal(err)
+	}
+	if execHash != "abc" {
+		t.Fatalf("tool exec hash = %q", execHash)
+	}
+	if err := s.AppendApproval(ctx, &Approval{
+		ID: "a3", SessionID: "s3", ToolRef: "builtin://write_file", Level: "confirm",
+		Decision: "allow", Scope: "once", ExecHash: "abc", ContentTrust: TrustUntrusted,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var gotHash, gotTrust string
+	if err := s.(*sqliteStore).db.QueryRowContext(ctx,
+		`SELECT exec_hash, content_trust FROM approvals WHERE id = 'a3'`).Scan(&gotHash, &gotTrust); err != nil {
+		t.Fatal(err)
+	}
+	if gotHash != "abc" || gotTrust != TrustUntrusted {
+		t.Fatalf("approval phase3 columns = %q %q", gotHash, gotTrust)
+	}
+}
+
+func TestPermissionRules(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	rule := PermissionRule{
+		ToolRef: "builtin://write_file", Action: "write", MatchKey: "builtin://write_file|write|ws/docs",
+		Note: "docs only",
+	}
+	if err := s.CreatePermissionRule(ctx, &rule); err != nil {
+		t.Fatal(err)
+	}
+	if rule.ID == "" {
+		t.Fatal("rule id not assigned")
+	}
+	got, ok, err := s.MatchPermissionRule(ctx, "builtin://write_file", "write", "builtin://write_file|write|ws/docs")
+	if err != nil || !ok || got.ID != rule.ID || got.Note != "docs only" {
+		t.Fatalf("match = %+v, %v, %v", got, ok, err)
+	}
+	if _, ok, err := s.MatchPermissionRule(ctx, "builtin://write_file", "write", "other"); err != nil || ok {
+		t.Fatalf("unexpected match for other key: %v %v", ok, err)
+	}
+	if err := s.TouchPermissionRule(ctx, rule.ID); err != nil {
+		t.Fatal(err)
+	}
+	list, err := s.ListPermissionRules(ctx)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("list = %+v, %v", list, err)
+	}
+	if list[0].UseCount != 1 || list[0].LastUsedAt == "" {
+		t.Fatalf("touch not recorded: %+v", list[0])
+	}
+	// Same key upserts the note instead of duplicating.
+	dup := PermissionRule{ToolRef: rule.ToolRef, Action: rule.Action, MatchKey: rule.MatchKey, Note: "updated"}
+	if err := s.CreatePermissionRule(ctx, &dup); err != nil {
+		t.Fatal(err)
+	}
+	list, _ = s.ListPermissionRules(ctx)
+	if len(list) != 1 || list[0].Note != "updated" || list[0].ID != rule.ID {
+		t.Fatalf("upsert = %+v", list)
+	}
+	if err := s.DeletePermissionRule(ctx, rule.ID); err != nil {
+		t.Fatal(err)
+	}
+	if list, _ := s.ListPermissionRules(ctx); len(list) != 0 {
+		t.Fatalf("rule not deleted: %+v", list)
+	}
+}
+
+func TestMigrationUpgradeFromPhase2(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "phase2.db")
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stmts, err := migrations.Ordered()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := raw.Exec(stmts[i].SQL); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := raw.Exec(`INSERT INTO kv (key, value) VALUES (?, '2')`, schemaVersionKey); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`INSERT INTO sessions (id, workspace_root, state, created_at, updated_at)
+		VALUES ('p2', 'ws', 'completed', 't', 't')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`INSERT INTO approvals (id, session_id, tool_ref, level, decision, scope, decided_at, created_at)
+		VALUES ('old-a', 'p2', 'builtin://write_file', 'confirm', 'allow', 'once', 't', 't')`); err != nil {
+		t.Fatal(err)
+	}
+	_ = raw.Close()
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("upgrade open: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+	if v, _ := s.KVGet(context.Background(), schemaVersionKey); v != "3" {
+		t.Fatalf("schema version = %q, want 3", v)
+	}
+	sess, err := s.GetSession(context.Background(), "p2")
+	if err != nil || sess.Preset != "default" {
+		t.Fatalf("phase2 session upgrade: %+v, %v", sess, err)
+	}
+	var hash, trust string
+	if err := s.(*sqliteStore).db.QueryRowContext(context.Background(),
+		`SELECT exec_hash, content_trust FROM approvals WHERE id = 'old-a'`).Scan(&hash, &trust); err != nil {
+		t.Fatal(err)
+	}
+	if hash != "" || trust != "trusted" {
+		t.Fatalf("old approval defaults = %q %q", hash, trust)
+	}
+}
+
 func TestSessionApprovalGrant(t *testing.T) {
 	s := openTemp(t)
 	ctx := context.Background()
@@ -240,14 +383,14 @@ func TestMigrationUpgradeFromPhase1(t *testing.T) {
 		t.Fatalf("upgrade open: %v", err)
 	}
 	defer func() { _ = s.Close() }()
-	if v, _ := s.KVGet(context.Background(), schemaVersionKey); v != "2" {
-		t.Fatalf("schema version = %q, want 2", v)
+	if v, _ := s.KVGet(context.Background(), schemaVersionKey); v != "3" {
+		t.Fatalf("schema version = %q, want 3", v)
 	}
 	old, err := s.GetSession(context.Background(), "old")
 	if err != nil {
 		t.Fatalf("old session unreadable after upgrade: %v", err)
 	}
-	if old.ModelID != "" || old.State != "completed" {
+	if old.ModelID != "" || old.Preset != "default" || old.State != "completed" {
 		t.Fatalf("old session defaults wrong: %+v", old)
 	}
 	// The new table must be usable.

@@ -60,6 +60,8 @@ func (t *WriteFile) Meta() Meta {
 		Trust:       "trusted",
 		Reversible:  true,
 		RetrySafe:   false,
+		// Phase 3 allows hooks to rewrite the body only; path stays immutable.
+		PatchableFields: []string{"content"},
 	}
 }
 

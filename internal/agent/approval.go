@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -15,7 +16,13 @@ var (
 	ErrArgsDrift = errors.New("agent: tool arguments changed after approval")
 	// ErrBudgetExhausted means a budget item exceeded its limit a second time.
 	ErrBudgetExhausted = errors.New("agent: budget exhausted after grace")
+	// ErrPersistentPhrase means the typed confirmation phrase did not match.
+	ErrPersistentPhrase = errors.New("agent: persistent approval requires the exact confirmation phrase")
 )
+
+// PersistentPhrase is the typed confirmation required to create a persistent
+// rule (ADR-0002: broad grants need a deliberate, non-click action).
+const PersistentPhrase = "允许持久"
 
 const defaultApprovalTimeout = 5 * time.Minute
 
@@ -35,20 +42,31 @@ type pendingApproval struct {
 	decided  bool
 }
 
-// Approve accepts the pending request. scope is "once" or "session"; session
-// scope is rejected unless the request offered it.
-func (s *Session) Approve(approvalID, scope string) error {
+// Approve accepts the pending request. scope is once, session or persistent;
+// persistent requires the exact typed phrase and a request that offered it.
+func (s *Session) Approve(approvalID, scope string, phrase ...string) error {
 	if scope == "" {
 		scope = "once"
 	}
-	if scope != "once" && scope != "session" {
-		return errors.New("agent: approval scope must be once or session")
+	switch scope {
+	case "once", "session", "persistent":
+	default:
+		return errors.New("agent: approval scope must be once, session or persistent")
 	}
 	s.mu.Lock()
 	allowSession := s.pendingAllowSession
+	allowPersistent := s.pendingAllowPersist
 	s.mu.Unlock()
 	if scope == "session" && !allowSession {
 		return errors.New("agent: this request does not offer session scope")
+	}
+	if scope == "persistent" {
+		if !allowPersistent {
+			return errors.New("agent: this request does not offer persistent scope")
+		}
+		if len(phrase) == 0 || strings.TrimSpace(phrase[0]) != PersistentPhrase {
+			return ErrPersistentPhrase
+		}
 	}
 	return s.decide(approvalID, true, scope, "")
 }
@@ -78,7 +96,7 @@ func (s *Session) decide(approvalID string, allow bool, scope, feedback string) 
 
 // awaitApproval blocks until a decision, timeout (paused), or cancellation.
 // The same approval id is re-issued after Resume with a new deadline.
-func (s *Session) awaitApproval(ctx context.Context, payload ApprovalPayload, snapshot string, allowSession bool) (approvalDecision, error) {
+func (s *Session) awaitApproval(ctx context.Context, payload ApprovalPayload, snapshot string, allowSession, allowPersistent bool) (approvalDecision, error) {
 	timeout := s.mgr.approvalTimeout
 	if timeout <= 0 {
 		timeout = defaultApprovalTimeout
@@ -86,6 +104,7 @@ func (s *Session) awaitApproval(ctx context.Context, payload ApprovalPayload, sn
 	s.mu.Lock()
 	s.pending = &pendingApproval{id: payload.ApprovalID, snapshot: snapshot}
 	s.pendingAllowSession = allowSession
+	s.pendingAllowPersist = allowPersistent
 	s.mu.Unlock()
 	defer func() {
 		s.mu.Lock()
@@ -93,6 +112,7 @@ func (s *Session) awaitApproval(ctx context.Context, payload ApprovalPayload, sn
 			s.pending = nil
 		}
 		s.pendingAllowSession = false
+		s.pendingAllowPersist = false
 		s.mu.Unlock()
 	}()
 

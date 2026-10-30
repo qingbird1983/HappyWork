@@ -10,12 +10,15 @@ import (
 // AppInfo is the read-only startup metadata shown in the top bar. The data
 // destination is stated explicitly: a cloud provider sees workspace content.
 type AppInfo struct {
-	Provider        string `json:"provider"`
-	Model           string `json:"model"`
-	Mock            bool   `json:"mock"`
-	DataDestination string `json:"dataDestination"`
-	MCPServers      int    `json:"mcpServers"`
-	MCPError        string `json:"mcpError,omitempty"`
+	Provider         string `json:"provider"`
+	Model            string `json:"model"`
+	Mock             bool   `json:"mock"`
+	DataDestination  string `json:"dataDestination"`
+	MCPServers       int    `json:"mcpServers"`
+	MCPError         string `json:"mcpError,omitempty"`
+	HooksFingerprint string `json:"hooksFingerprint,omitempty"`
+	HooksError       string `json:"hooksError,omitempty"`
+	PresetsError     string `json:"presetsError,omitempty"`
 }
 
 // SessionService is the frontend-facing API. Method names are addressed from
@@ -25,14 +28,43 @@ type SessionService struct {
 	info AppInfo
 }
 
+// PresetInfo is one selectable permission profile.
+type PresetInfo struct {
+	Name              string `json:"name"`
+	Description       string `json:"description"`
+	PersistentAllowed bool   `json:"persistentAllowed"`
+}
+
 // ListSessions returns persisted sessions, most recent first.
 func (s *SessionService) ListSessions() ([]storage.Session, error) {
 	return s.mgr.ListSessions(context.Background())
 }
 
-// CreateSession pins the workspace root and returns the new session.
-func (s *SessionService) CreateSession(workspaceRoot string) (storage.Session, error) {
-	return s.mgr.CreateSession(context.Background(), workspaceRoot)
+// CreateSession pins the workspace root and preset, and returns the session.
+func (s *SessionService) CreateSession(workspaceRoot, preset string) (storage.Session, error) {
+	return s.mgr.CreateSession(context.Background(), workspaceRoot, preset)
+}
+
+// ListPresets returns the available profiles with descriptions.
+func (s *SessionService) ListPresets() ([]PresetInfo, error) {
+	catalog := s.mgr.Presets()
+	out := make([]PresetInfo, 0, len(catalog))
+	for _, p := range catalog {
+		out = append(out, PresetInfo{
+			Name: p.Name, Description: p.Description, PersistentAllowed: p.PersistentAllowed,
+		})
+	}
+	return out, nil
+}
+
+// ListRules returns persistent permission rules.
+func (s *SessionService) ListRules() ([]storage.PermissionRule, error) {
+	return s.mgr.ListRules(context.Background())
+}
+
+// DeleteRule revokes one persistent permission rule.
+func (s *SessionService) DeleteRule(id string) error {
+	return s.mgr.DeleteRule(context.Background(), id)
 }
 
 // Send submits a user message; the run proceeds asynchronously and reports
@@ -55,13 +87,14 @@ func (s *SessionService) Cancel(sessionID string) error {
 	return nil
 }
 
-// Approve accepts a pending approval. scope is "once" or "session".
-func (s *SessionService) Approve(sessionID, approvalID, scope string) error {
+// Approve accepts a pending approval. scope is "once", "session" or
+// "persistent"; persistent requires the typed phrase.
+func (s *SessionService) Approve(sessionID, approvalID, scope, phrase string) error {
 	sess, err := s.mgr.GetSession(context.Background(), sessionID)
 	if err != nil {
 		return err
 	}
-	return sess.Approve(approvalID, scope)
+	return sess.Approve(approvalID, scope, phrase)
 }
 
 // Deny rejects a pending approval with optional feedback for the model.

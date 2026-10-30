@@ -119,6 +119,10 @@ type fixture struct {
 }
 
 func newFixture(t *testing.T) *fixture {
+	return newFixtureWithOptions(t, Options{})
+}
+
+func newFixtureWithOptions(t *testing.T, opts Options) *fixture {
 	t.Helper()
 	dir := t.TempDir()
 	root, err := workspace.NewRoot(dir)
@@ -133,7 +137,8 @@ func newFixture(t *testing.T) *fixture {
 
 	em := &recordingEmitter{}
 	prov := &fakeProvider{}
-	mgr := NewManager(store, prov, em, log.New(os.Stderr, "test ", 0), Options{DataDir: dir})
+	opts.DataDir = dir
+	mgr := NewManager(store, prov, em, log.New(os.Stderr, "test ", 0), opts)
 	return &fixture{mgr: mgr, emitter: em, store: store, root: root, prov: prov}
 }
 
@@ -168,6 +173,18 @@ func waitTerminal(t *testing.T, f *fixture, s *Session) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("session did not reach a terminal state, state=%s", s.State())
+}
+
+func waitEventCount(t *testing.T, em *recordingEmitter, name string, want int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if em.count(name) >= want {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("event %s: got %d, want at least %d", name, em.count(name), want)
 }
 
 func waitState(t *testing.T, s *Session, want string) {

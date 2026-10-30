@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/happywork/happywork/internal/hook"
 	"github.com/happywork/happywork/internal/model"
 	"github.com/happywork/happywork/internal/permission"
 	"github.com/happywork/happywork/internal/storage"
@@ -33,6 +34,10 @@ type Options struct {
 	ModelName string
 	// ExternalTools is the live MCP snapshot (tool.Registry.SetExternal).
 	ExternalTools func() []tool.Tool
+	// Presets is the loaded preset catalog. Nil uses the builtins.
+	Presets permission.PresetSet
+	// Hooks is the loaded in-process hook runner. Nil disables hooks.
+	Hooks *hook.Runner
 }
 
 // Manager creates sessions and routes commands to them. One Manager per app.
@@ -42,7 +47,8 @@ type Manager struct {
 	emit            Emitter
 	log             *log.Logger
 	opts            Options
-	gate            permission.Gate
+	engine          *permission.Engine
+	hooks           *hook.Runner
 	budget          BudgetConfig
 	clock           Clock
 	approvalTimeout time.Duration
@@ -63,11 +69,32 @@ func NewManager(store storage.Store, prov model.Provider, emit Emitter, lg *log.
 		emit:            emit,
 		log:             lg,
 		opts:            opts,
+		engine:          permission.NewEngine(opts.Presets, ruleStore{store: store}),
+		hooks:           opts.Hooks,
 		budget:          DefaultBudget(),
 		clock:           realClock{},
 		approvalTimeout: defaultApprovalTimeout,
 		sessions:        map[string]*Session{},
 	}
+}
+
+// ruleStore adapts storage to the permission engine's grant interfaces.
+type ruleStore struct{ store storage.Store }
+
+func (r ruleStore) MatchRule(ctx context.Context, toolRef, action, matchKey string) (permission.Rule, bool, error) {
+	row, ok, err := r.store.MatchPermissionRule(ctx, toolRef, action, matchKey)
+	if err != nil || !ok {
+		return permission.Rule{}, ok, err
+	}
+	return permission.Rule{ID: row.ID, ToolRef: row.ToolRef, Action: row.Action, MatchKey: row.MatchKey}, true, nil
+}
+
+func (r ruleStore) TouchRule(ctx context.Context, id string) error {
+	return r.store.TouchPermissionRule(ctx, id)
+}
+
+func (r ruleStore) HasSessionGrant(ctx context.Context, sessionID, matchKey string) (bool, error) {
+	return r.store.HasSessionApproval(ctx, sessionID, matchKey)
 }
 
 func (m *Manager) modelName() string {
@@ -82,9 +109,16 @@ func (m *Manager) modelName() string {
 // oversized results go under the app data dir.
 func (m *Manager) newRegistry(root workspace.Root, sessionID string) *tool.Registry {
 	reg := tool.NewRegistry()
-	reg.Register(tool.NewReadFile(root))
-	reg.Register(tool.NewListDir(root))
-	reg.Register(tool.NewWriteFile(root, m.dataPath("backups"), sessionID))
+	read := tool.NewReadFile(root)
+	list := tool.NewListDir(root)
+	write := tool.NewWriteFile(root, m.dataPath("backups"), sessionID)
+	for _, t := range []tool.Tool{read, list, write} {
+		meta := t.Meta()
+		permission.MustCheckTool(meta.Ref, meta.Action, meta.Reversible)
+	}
+	reg.Register(read)
+	reg.Register(list)
+	reg.Register(write)
 	if m.opts.ExternalTools != nil {
 		reg.SetExternal(m.opts.ExternalTools)
 	}
@@ -100,18 +134,26 @@ func (m *Manager) dataPath(elem ...string) string {
 	return filepath.Join(parts...)
 }
 
-// CreateSession validates the workspace root, persists the session and keeps
-// it in memory.
-func (m *Manager) CreateSession(ctx context.Context, workspaceRoot string) (storage.Session, error) {
+// CreateSession validates the workspace root and preset, persists the session
+// and keeps it in memory. Without a preset the "default" profile is used.
+func (m *Manager) CreateSession(ctx context.Context, workspaceRoot string, preset ...string) (storage.Session, error) {
 	root, err := workspace.NewRoot(workspaceRoot)
 	if err != nil {
 		return storage.Session{}, fmt.Errorf("agent: %w", err)
+	}
+	name := "default"
+	if len(preset) > 0 && preset[0] != "" {
+		name = preset[0]
+	}
+	if !m.engine.HasPreset(name) {
+		return storage.Session{}, fmt.Errorf("agent: unknown preset %q", name)
 	}
 	sess := storage.Session{
 		ID:            storage.NewID(),
 		Title:         "新会话",
 		WorkspaceRoot: root.String(),
 		ModelID:       m.modelName(),
+		Preset:        name,
 		State:         StateIdle,
 	}
 	if err := m.store.CreateSession(ctx, &sess); err != nil {
@@ -124,6 +166,22 @@ func (m *Manager) CreateSession(ctx context.Context, workspaceRoot string) (stor
 	m.sessions[sess.ID] = s
 	m.mu.Unlock()
 	return sess, nil
+}
+
+// PresetNames returns the selectable profiles.
+func (m *Manager) PresetNames() []string { return m.engine.PresetNames() }
+
+// Presets returns the selectable profiles with descriptions.
+func (m *Manager) Presets() []permission.Preset { return m.engine.Presets() }
+
+// ListRules returns persistent permission rules.
+func (m *Manager) ListRules(ctx context.Context) ([]storage.PermissionRule, error) {
+	return m.store.ListPermissionRules(ctx)
+}
+
+// DeleteRule revokes a persistent permission rule.
+func (m *Manager) DeleteRule(ctx context.Context, id string) error {
+	return m.store.DeletePermissionRule(ctx, id)
 }
 
 // GetSession returns the in-memory session; unknown IDs that exist in the

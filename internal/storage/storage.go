@@ -14,6 +14,7 @@ type Session struct {
 	Title         string `json:"title"`
 	WorkspaceRoot string `json:"workspaceRoot"`
 	ModelID       string `json:"modelId"`
+	Preset        string `json:"preset"`
 	State         string `json:"state"`
 	CreatedAt     string `json:"createdAt"`
 	UpdatedAt     string `json:"updatedAt"`
@@ -62,6 +63,7 @@ type ToolCallRecord struct {
 	Decision   string
 	ArgsJSON   string
 	ResultJSON string
+	ExecHash   string
 	Status     string
 	CreatedAt  string
 }
@@ -69,20 +71,37 @@ type ToolCallRecord struct {
 // Approval is one decided approval request. Pending requests are in-memory only
 // (a crash drops them; recovery re-asks, see design.md §11).
 type Approval struct {
+	ID           string `json:"id"`
+	SessionID    string `json:"sessionId"`
+	TurnID       int64  `json:"turnId"`
+	ToolCallID   string `json:"toolCallId"`
+	ToolRef      string `json:"toolRef"`
+	MatchKey     string `json:"matchKey"`
+	Level        string `json:"level"`
+	Decision     string `json:"decision"`
+	Scope        string `json:"scope"`
+	ArgsJSON     string `json:"argsJson"`
+	ExecHash     string `json:"execHash"`
+	ContentTrust string `json:"contentTrust"`
+	Note         string `json:"note"`
+	DecidedBy    string `json:"decidedBy"`
+	DecidedAt    string `json:"decidedAt"`
+	CreatedAt    string `json:"createdAt"`
+}
+
+// PermissionRule is one persistent approval (Phase 3). Rules only ever grant
+// ask→allow for reversible built-in tools; deny and irreversible rows are
+// rejected before a row is written.
+type PermissionRule struct {
 	ID         string `json:"id"`
-	SessionID  string `json:"sessionId"`
-	TurnID     int64  `json:"turnId"`
-	ToolCallID string `json:"toolCallId"`
 	ToolRef    string `json:"toolRef"`
+	Action     string `json:"action"`
 	MatchKey   string `json:"matchKey"`
-	Level      string `json:"level"`
 	Decision   string `json:"decision"`
-	Scope      string `json:"scope"`
-	ArgsJSON   string `json:"argsJson"`
 	Note       string `json:"note"`
-	DecidedBy  string `json:"decidedBy"`
-	DecidedAt  string `json:"decidedAt"`
 	CreatedAt  string `json:"createdAt"`
+	LastUsedAt string `json:"lastUsedAt"`
+	UseCount   int64  `json:"useCount"`
 }
 
 // AuditEntry is one immutable audit row (A5 boundary denials; richer use in Phase 4).
@@ -111,6 +130,12 @@ type Store interface {
 
 	AppendApproval(ctx context.Context, a *Approval) error
 	HasSessionApproval(ctx context.Context, sessionID, matchKey string) (bool, error)
+
+	CreatePermissionRule(ctx context.Context, r *PermissionRule) error
+	MatchPermissionRule(ctx context.Context, toolRef, action, matchKey string) (PermissionRule, bool, error)
+	ListPermissionRules(ctx context.Context) ([]PermissionRule, error)
+	DeletePermissionRule(ctx context.Context, id string) error
+	TouchPermissionRule(ctx context.Context, id string) error
 
 	AppendEvent(ctx context.Context, sessionID, typ, payloadJSON string) error
 	AppendAudit(ctx context.Context, sessionID, action, decision, reason string) error

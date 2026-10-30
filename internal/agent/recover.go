@@ -95,6 +95,7 @@ func (s *Session) injectUnknownResults(ctx context.Context) {
 			}
 			if strings.HasPrefix(call.Name, "mcp__") {
 				result.Trust = storage.TrustUntrusted
+				s.markUntrusted()
 			}
 			if err := s.mgr.store.AppendMessage(ctx, &result); err != nil {
 				s.mgr.log.Printf("agent: append recovery result: %v", err)

@@ -99,15 +99,18 @@ func (s *sqliteStore) CreateSession(ctx context.Context, sess *Session) error {
 	if sess.State == "" {
 		sess.State = "idle"
 	}
+	if sess.Preset == "" {
+		sess.Preset = "default"
+	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO sessions (id, title, workspace_root, model_id, state, created_at, updated_at) VALUES (?,?,?,?,?,?,?)`,
-		sess.ID, sess.Title, sess.WorkspaceRoot, sess.ModelID, sess.State, sess.CreatedAt, sess.UpdatedAt)
+		`INSERT INTO sessions (id, title, workspace_root, model_id, preset, state, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)`,
+		sess.ID, sess.Title, sess.WorkspaceRoot, sess.ModelID, sess.Preset, sess.State, sess.CreatedAt, sess.UpdatedAt)
 	return err
 }
 
 func (s *sqliteStore) ListSessions(ctx context.Context) ([]Session, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, title, workspace_root, model_id, state, created_at, updated_at FROM sessions ORDER BY updated_at DESC`)
+		`SELECT id, title, workspace_root, model_id, preset, state, created_at, updated_at FROM sessions ORDER BY updated_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +118,7 @@ func (s *sqliteStore) ListSessions(ctx context.Context) ([]Session, error) {
 	var out []Session
 	for rows.Next() {
 		var sess Session
-		if err := rows.Scan(&sess.ID, &sess.Title, &sess.WorkspaceRoot, &sess.ModelID, &sess.State, &sess.CreatedAt, &sess.UpdatedAt); err != nil {
+		if err := rows.Scan(&sess.ID, &sess.Title, &sess.WorkspaceRoot, &sess.ModelID, &sess.Preset, &sess.State, &sess.CreatedAt, &sess.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, sess)
@@ -126,8 +129,8 @@ func (s *sqliteStore) ListSessions(ctx context.Context) ([]Session, error) {
 func (s *sqliteStore) GetSession(ctx context.Context, id string) (Session, error) {
 	var sess Session
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, title, workspace_root, model_id, state, created_at, updated_at FROM sessions WHERE id = ?`, id).
-		Scan(&sess.ID, &sess.Title, &sess.WorkspaceRoot, &sess.ModelID, &sess.State, &sess.CreatedAt, &sess.UpdatedAt)
+		`SELECT id, title, workspace_root, model_id, preset, state, created_at, updated_at FROM sessions WHERE id = ?`, id).
+		Scan(&sess.ID, &sess.Title, &sess.WorkspaceRoot, &sess.ModelID, &sess.Preset, &sess.State, &sess.CreatedAt, &sess.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return sess, fmt.Errorf("storage: session %s: %w", id, ErrNotFound)
 	}
@@ -218,9 +221,9 @@ func (s *sqliteStore) AppendToolCall(ctx context.Context, tc *ToolCallRecord) er
 		tc.Status = "running"
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO tool_calls (id, session_id, turn_id, name, tool_ref, match_key, risk, reversible, decision, args_json, result_json, status, created_at)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		tc.ID, tc.SessionID, tc.TurnID, tc.Name, tc.ToolRef, tc.MatchKey, tc.Risk, tc.Reversible, tc.Decision, tc.ArgsJSON, tc.ResultJSON, tc.Status, tc.CreatedAt)
+		`INSERT INTO tool_calls (id, session_id, turn_id, name, tool_ref, match_key, risk, reversible, decision, args_json, result_json, exec_hash, status, created_at)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		tc.ID, tc.SessionID, tc.TurnID, tc.Name, tc.ToolRef, tc.MatchKey, tc.Risk, tc.Reversible, tc.Decision, tc.ArgsJSON, tc.ResultJSON, tc.ExecHash, tc.Status, tc.CreatedAt)
 	return err
 }
 
@@ -237,10 +240,13 @@ func (s *sqliteStore) AppendApproval(ctx context.Context, a *Approval) error {
 	if a.DecidedBy == "" {
 		a.DecidedBy = "user"
 	}
+	if a.ContentTrust == "" {
+		a.ContentTrust = TrustTrusted
+	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO approvals (id, session_id, turn_id, tool_call_id, tool_ref, match_key, level, decision, scope, args_json, note, decided_by, decided_at, created_at)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		a.ID, a.SessionID, a.TurnID, a.ToolCallID, a.ToolRef, a.MatchKey, a.Level, a.Decision, a.Scope, a.ArgsJSON, a.Note, a.DecidedBy, a.DecidedAt, a.CreatedAt)
+		`INSERT INTO approvals (id, session_id, turn_id, tool_call_id, tool_ref, match_key, level, decision, scope, args_json, exec_hash, content_trust, note, decided_by, decided_at, created_at)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		a.ID, a.SessionID, a.TurnID, a.ToolCallID, a.ToolRef, a.MatchKey, a.Level, a.Decision, a.Scope, a.ArgsJSON, a.ExecHash, a.ContentTrust, a.Note, a.DecidedBy, a.DecidedAt, a.CreatedAt)
 	return err
 }
 
@@ -259,6 +265,70 @@ func (s *sqliteStore) HasSessionApproval(ctx context.Context, sessionID, matchKe
 func (s *sqliteStore) UpdateToolCallResult(ctx context.Context, id, resultJSON, status string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE tool_calls SET result_json = ?, status = ? WHERE id = ?`, resultJSON, status, id)
+	return err
+}
+
+func (s *sqliteStore) CreatePermissionRule(ctx context.Context, r *PermissionRule) error {
+	if r.ID == "" {
+		r.ID = NewID()
+	}
+	if r.CreatedAt == "" {
+		r.CreatedAt = Now()
+	}
+	if r.Decision == "" {
+		r.Decision = "allow"
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO permission_rules (id, tool_ref, action, match_key, decision, note, created_at, last_used_at, use_count)
+		 VALUES (?,?,?,?,?,?,?,?,?)
+		 ON CONFLICT (tool_ref, action, match_key) DO UPDATE SET note = excluded.note`,
+		r.ID, r.ToolRef, r.Action, r.MatchKey, r.Decision, r.Note, r.CreatedAt, r.LastUsedAt, r.UseCount)
+	return err
+}
+
+func (s *sqliteStore) MatchPermissionRule(ctx context.Context, toolRef, action, matchKey string) (PermissionRule, bool, error) {
+	var r PermissionRule
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, tool_ref, action, match_key, decision, note, created_at, last_used_at, use_count
+		 FROM permission_rules WHERE tool_ref = ? AND action = ? AND match_key = ? AND decision = 'allow'`,
+		toolRef, action, matchKey).
+		Scan(&r.ID, &r.ToolRef, &r.Action, &r.MatchKey, &r.Decision, &r.Note, &r.CreatedAt, &r.LastUsedAt, &r.UseCount)
+	if err == sql.ErrNoRows {
+		return r, false, nil
+	}
+	if err != nil {
+		return r, false, err
+	}
+	return r, true, nil
+}
+
+func (s *sqliteStore) ListPermissionRules(ctx context.Context) ([]PermissionRule, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, tool_ref, action, match_key, decision, note, created_at, last_used_at, use_count
+		 FROM permission_rules ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []PermissionRule
+	for rows.Next() {
+		var r PermissionRule
+		if err := rows.Scan(&r.ID, &r.ToolRef, &r.Action, &r.MatchKey, &r.Decision, &r.Note, &r.CreatedAt, &r.LastUsedAt, &r.UseCount); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqliteStore) DeletePermissionRule(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM permission_rules WHERE id = ?`, id)
+	return err
+}
+
+func (s *sqliteStore) TouchPermissionRule(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE permission_rules SET last_used_at = ?, use_count = use_count + 1 WHERE id = ?`, Now(), id)
 	return err
 }
 

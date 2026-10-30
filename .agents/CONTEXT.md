@@ -1,50 +1,42 @@
 # 工作上下文交接卡
 
-- 更新：2026-10-30（会话主题：Phase 2 验收通过并合并，准备 Phase 3）
+- 更新：2026-10-30（会话主题：Phase 3 实现、真机验收、签收与收尾）
 
 ## 当前阶段与状态（对照 roadmap 看板）
 
-- **Phase 1（最小骨架）✅ 完成（2026-10-30，tag `phase-1.end`）**
-- **Phase 2（受控执行闭环）✅ 完成（2026-10-30，tag `phase-2.end`）**：8/8 验收通过，A1/A8 两项一票否决均过；报告 `docs/design/phase-2/report.md`（定稿）；CI run 41054482312 全绿。
-- **Phase 3（权限引擎 + Hook + TOCTOU）未开始**：立项前先读 roadmap §3 与 architecture/03 的待决项。
-- 分支：`feat/phase2-controlled-execution` 已合并 main（merge commit 带分支语义；tag 指向合并提交）
-- 远端：`git@github.com:qingbird1983/HappyWork.git`（main 为常绿基线）
-- 工作约定：验收/真机测试一律 AI 自跑，不请所有者点 GUI；证据优先（截图/DB/日志/门禁）
+- **Phase 1 ✅ 完成（tag `phase-1.end`）**
+- **Phase 2 ✅ 完成（tag `phase-2.end`）**：8/8 验收，报告定稿，main CI 绿。
+- **Phase 3 ✅ 完成（tag `phase-3.end`）**：A1~A8 通过；CI run 41066195833 全绿；报告 [docs/design/phase-3/report.md](../docs/design/phase-3/report.md)。
+- 分支：`feat/phase3-permission-engine` 已合并 main；main 常绿；下一阶段 Phase 4 尚未立项。
 
 ## 上一轮完成了什么（3~5 条）
 
-- Phase 2 全量实现：DeepSeek 流式 + function calling + usage、Actor 状态机、审批 DIM1~3、本地三工具、MCP stdio 双代、预算五上限 + 宽限、崩溃恢复、纯文本渲染 + CSP、桌面服务与前端。
-- 所有者签收后提交（`f474955`）、推送并跑三平台 CI：check + windows/macos/ubuntu build 全绿。
-- 真机验收：DeepSeek 审批写文件成功；MCP 发现/调用 + untrusted + 注入按文本显示；审批中强杀 → 重启继续 → 注入"结果未知"；费用合计约 $0.0009。
-- 修复并沉淀 P-005~P-008；补预算五上限与 `running_tool` 崩溃恢复测试；测试文件按 600 行预算拆分。
-- 文档：报告定稿、CHANGELOG 0.1.008/0.1.009、roadmap 改完成、docs/README、pitfalls、H-003/H-004、本卡。
+- 实现完整权限引擎：映射表唯一事实源、三内置预设 + 严格 `presets.d/*.yaml`、条件、DIM4 限额、持久规则（短语 `允许持久`、可查可删）、内容信任强制 once。
+- 实现 JCS execHash/TOCTOU 管道（RFC 8785 + I-JSON、审批/工具记录落 hash、执行前重算与路径身份复核）与编译期内置 Hook（五点、优先级、超时、panic、warn/deny/fail_closed、改参白名单、secret-scan、配置指纹）。
+- 桌面 API 与前端：预设选择与落库、规则面板、审批持久短语/信任/限额警示、`session:permission` 事件徽章。
+- 真机验收（隔离 APPDATA + DeepSeek）：默认预设写文件三作用域审批、session 授权写成功、exec_hash 64 hex、content_trust 入库、Hook 指纹日志/顶栏一致；修复纯 tool_calls 未落 assistant 消息与 once 预设仍提供持久两个缺陷，另将 MCP unknown 纳入副作用。
+- 文档收尾：Phase 3 报告定稿、CHANGELOG 0.1.011、看板/路线图勾选、P-009/P-010 沉淀、H-006 归档。
 
 ## 下一步（按优先级，注明阻塞项）
 
-1. **Phase 3 立项**：起草范围合同 + 施工设计 + ADR（权限映射表 golden tests、JCS execHash、DIM4 限额、persistent 规则、进程内 Hook、TOCTOU 管道），所有者过目后转定稿。
-2. Phase 3 开工前评估 Phase 2 遗留：生成式绑定（`wails3 generate bindings` 仍 0 services）、GUI 版 `running_tool` 强杀补跑、matchKey 是否纳入内容信任级。
-3. 后续阶段：Phase 4 不可变审计/回滚/签名；Phase 5 OS 沙箱；UI/UX 精修（触发条件：Phase 2 验收通过，已满足，可评估排期）。
-4. Backlog 评审：远程 MCP、多会话并行、Markdown 渲染等（roadmap §3）。
+1. Phase 4 立项评审：不可变审计/hash-chain、正式回滚、遗留风险（路径残窗、配额持久化、工具决策徽章持久展示）；需所有者放行后开工。
+2. 可选真机补录：持久短语与 secret-scan 的 GUI 提交（本轮受宿主安全分类器限制，由集成测试覆盖）。
+3. 生成式绑定仍不可用；继续使用集中式 `Call.ByName`（`frontend/src/api.ts`）。
 
 ## 未决问题
 
-- Hook 签名密钥签发方式（倾向本地生成 + TOFU）——Phase 3
-- JCS execHash 的字段范围与向后兼容——Phase 3
-- A6 CSP `connect-src` 是否可按平台收窄——待 Wails IPC 演进
-- MCP 远程传输、resources/prompts——Backlog
+- 工具决策徽章仅在运行期展示；transcript 重载后保留信任徽章，不保留 ask/session/限额徽章 → Phase 4 评估消息模型或回放。
+- JCS 上游无 v1 tag；配额内存计数重启归零；路径二次校验与执行之间仍有残窗（沙箱前承认）。
+- 外部进程 Hook/签名/TOFU：独立 ADR，不在 Phase 3。
 
 ## 关键提醒（坑/规范变更/易错点，链接 pitfalls 编号）
 
-- **每步先测后码或同步落测试**；bug 先写复现测试（standards/05）；自动化测试/CI 禁外网，只有 manual 标签真机测试可调 DeepSeek。
-- **审批快照只在消费决策时比较一次**（P-006）；过期/重复 approvalID 返回 `ErrStaleApproval`。
-- **终态事件发出前先清 busy**（P-005），否则完成后立即 Send 会被误拒。
-- **崩溃恢复只标活动状态**；运行中工具记 `unknown`，向模型说"结果未知"而非失败（P-008）。
-- **Windows 拉起控制台子进程必须 HideWindow**；强杀才用 `taskkill /T /F`（P-007）。
-- 渲染一律纯文本（React 文本节点），禁 `dangerouslySetInnerHTML`/`innerHTML`/`outerHTML`/`document.write`；门禁 `scripts/check-render-safety.sh`。
-- 敏感文件（`.git/`、`.env*` 除示例、`.ssh/`、私钥证书）读/写/列一律硬拒 + 审计，不提供审批放行。
-- MCP 结果 `trust=untrusted`、逐条审批、无 session 作用域；MCP 环境只注声明变量，不透传 key。
-- 工具结果 >256 KiB 附件化；写文件 ≤2 MiB、原子写、覆盖前单文件副本。
-- windowsgui 二进制 stderr 不可见：启动日志看 `%AppData%/happywork/happywork.log`（P-003）。
-- Wails 钉 v3.0.0；前端调后端 `Call.ByName`，集中在 `frontend/src/api.ts`；构建入口 `wails3 build`。
-- 密钥只从 `DEEPSEEK_API_KEY` 读取，永不入库/日志/transcript；仓库禁止个人绝对路径。
-- 文档与沟通中文；代码/标识符/commit 英文；feature 分支 + 所有者签收后推送。
+- 纯 tool_calls 回合必须落 assistant 消息（含 ToolCallsJSON），取消回合不得落悬空 tool_calls（P-009）。
+- 预设收紧到 once 时必须关闭持久选项（P-010）；任何放宽通道都要看收紧后的作用域。
+- 审批快照只在消费决策时比较一次（P-006）；终态先清 busy（P-005）。
+- 崩溃恢复只标活动状态；运行中工具记 unknown（P-008）。
+- Windows 控制台子进程必须 HideWindow；强杀才 taskkill /T /F（P-007）。
+- 敏感文件硬拒不提供审批放行；密钥只走环境变量，不入库/日志/transcript。
+- 渲染一律纯文本；Hook 改参仅 before_tool 白名单；after 只读；审计不落原文。
+- 自动化测试/CI 禁外网；只有 manual 标签真机测试可调 DeepSeek；GUI 验收使用隔离 APPDATA。
+- 文档与沟通中文；代码/标识符/commit 英文；feature 分支 + 签收后推送。
