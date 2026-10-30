@@ -139,9 +139,13 @@ func TestResolveMissingFile(t *testing.T) {
 
 func TestNewRootRejects(t *testing.T) {
 	if _, err := NewRoot(""); err == nil {
-		t.Fatal("NewRoot(\"\") should fail")
+		t.Fatal(`NewRoot("") should fail`)
 	}
-	if _, err := NewRoot(`\\server\share`); !errors.Is(err, ErrInvalidPath) {
-		t.Fatalf("NewRoot(UNC) = %v, want ErrInvalidPath", err)
+	if runtime.GOOS == "windows" {
+		// UNC is a dangerous alias only on Windows; on POSIX a leading `\\`
+		// is just an odd literal directory name and must stay resolvable.
+		if _, err := NewRoot(`\\server\share`); !errors.Is(err, ErrInvalidPath) {
+			t.Fatalf("NewRoot(UNC) = %v, want ErrInvalidPath", err)
+		}
 	}
 }
