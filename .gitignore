@@ -1,0 +1,56 @@
+# ===== 通用（任何项目都建议保留）=====
+
+# 环境变量与密钥——永不入库（standards/06）
+.env
+.env.*
+!.env.example
+
+# 操作系统杂项
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 编辑器 / IDE（可共享的配置另用 ! 排除）
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+*.swo
+*~
+
+# 日志与临时文件
+*.log
+tmp/
+.cache/
+
+# ===== 按语言启用（本项目：Go + 前端 TS）=====
+
+# --- Node / TypeScript（frontend/）---
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+.npm/
+.pnpm-store/
+
+# --- Go ---
+bin/
+*.exe
+*.test
+*.out
+
+# --- Wails 构建产物 ---
+build/bin/
+
+# --- SQLite 运行时文件 ---
+*.db
+*.db-wal
+*.db-shm
+
+# ===== 项目约定 =====
+
+# 所有者本地输入区（参考/建议/简报）——整目录永不推送（规则见 briefs/README.md）
+briefs/
+
+# 大文件二进制资产须先写 ADR 方可入库（standards/08）
+# 构建产物目录一律不入库（名称按项目布局回填，如 target/、dist/、out/）

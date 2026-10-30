@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+# check-size —— 体量哨兵（standards/08 的机器执行版）
+# 用途：核对 docs / .agents / 源码的防膨胀预算，超标即非零退出（CI 可挂门禁）。
+# 依赖：bash + wc + find（Git Bash / Linux / macOS 均可）。
+# 用法：bash scripts/check-size [--quiet]
+# 初始化时按项目回填 SRC_DIRS 与 SOURCE_EXTS；预算数字与 standards/08 保持一致。
+
+set -u
+cd "$(dirname "$0")/.."
+
+QUIET="${1:-}"
+
+# ───── 配置（与 standards/08 对齐）──────────────────────────────
+SRC_DIRS=(cmd internal frontend)    # 源码目录（standards/01 §2 布局；目录未建立时自动跳过）
+SOURCE_EXTS=(go ts tsx js)          # 计入行数统计的扩展名
+MAX_SOURCE_LINES=600              # 单源文件上限（standards/08 §4）
+MAX_DOC_LINES=300                 # docs 正式文档单篇上限（§2）
+MAX_DESIGN_LINES=500              # phase/design 设计稿单篇上限（§2）
+MAX_ADR_LINES=100                 # 单篇 ADR 上限（§2）
+MAX_CONTEXT_LINES=150             # .agents/CONTEXT.md 上限（§3）
+MAX_AGENTS_FILES=40               # .agents 文件数上限（不含 vendored 技能子目录）（§3）
+DOCS_SOFT_LIMIT=150               # docs 总篇数软上限（§2）——超标 WARN
+# ───────────────────────────────────────────────────────────────
+
+fails=0
+warns=0
+
+say() { [ "$QUIET" = "--quiet" ] || echo "$1"; }
+fail() { echo "FAIL: $1"; fails=$((fails + 1)); }
+warn() { echo "WARN: $1"; warns=$((warns + 1)); }
+
+# 1) 源码单文件行数
+name_args=()
+for ext in "${SOURCE_EXTS[@]}"; do
+  name_args+=(-name "*.${ext}" -o)
+done
+unset 'name_args[${#name_args[@]}-1]'   # 去掉末尾 -o
+for dir in "${SRC_DIRS[@]}"; do
+  [ -d "$dir" ] || continue
+  while IFS= read -r f; do
+    lines=$(wc -l < "$f")
+    if [ "$lines" -gt "$MAX_SOURCE_LINES" ]; then
+      fail "源文件超限: $f (${lines} > ${MAX_SOURCE_LINES} 行) —— 拆分或按 standards/08 §4 登记豁免"
+    fi
+  done < <(find "$dir" -type f \( "${name_args[@]}" \) 2>/dev/null)
+done
+
+# 2) docs 单篇行数（design 目录用 500 上限；其余 300；模板文件跳过）
+while IFS= read -r f; do
+  [ -f "$f" ] || continue
+  lines=$(wc -l < "$f")
+  case "$f" in
+    docs/design/*) limit=$MAX_DESIGN_LINES ;;
+    *)             limit=$MAX_DOC_LINES ;;
+  esac
+  if [ "$lines" -gt "$limit" ]; then
+    fail "文档超限: $f (${lines} > ${limit} 行) —— 拆分或精炼（standards/08 §2）"
+  fi
+done < <(find docs -type f -name '*.md' ! -name '_*' ! -name '*template*' 2>/dev/null)
+
+# 3) ADR 单篇行数
+for f in docs/adr/ADR-*.md; do
+  [ -f "$f" ] || continue
+  case "$f" in *template*) continue ;; esac
+  lines=$(wc -l < "$f")
+  if [ "$lines" -gt "$MAX_ADR_LINES" ]; then
+    fail "ADR 超限: $f (${lines} > ${MAX_ADR_LINES} 行) —— 一篇只装一个决策（standards/08 §2）"
+  fi
+done
+
+# 4) .agents 预算
+if [ -f .agents/CONTEXT.md ]; then
+  lines=$(wc -l < .agents/CONTEXT.md)
+  if [ "$lines" -gt "$MAX_CONTEXT_LINES" ]; then
+    fail ".agents/CONTEXT.md 超限 (${lines} > ${MAX_CONTEXT_LINES} 行) —— 该沉淀的没沉淀（.agents/README.md §3）"
+  fi
+fi
+if [ -d .agents ]; then
+  count=$(find .agents -type f ! -name '_TEMPLATE.md' 2>/dev/null \
+    | grep -v -E '^\.agents/skills/[^/]+/' | wc -l)   # skills 根文件计入；vendored 子目录不计
+  if [ "$count" -gt "$MAX_AGENTS_FILES" ]; then
+    fail ".agents 文件数超限 (${count} > ${MAX_AGENTS_FILES}) —— 触发整合评审（.agents/README.md §3）"
+  else
+    say "OK: .agents 文件数 ${count}/${MAX_AGENTS_FILES}"
+  fi
+fi
+
+# 5) briefs 本地输入区（软预算 → 仅提醒：堆着不沉淀 = 该开对齐会话）
+if [ -d briefs ]; then
+  brief_count=$(find briefs -type f ! -name '_TEMPLATE.md' ! -name 'README.md' 2>/dev/null | wc -l)
+  say "INFO: briefs 文件数 ${brief_count}（软上限 30，本地目录）"
+  if [ "$brief_count" -gt 30 ]; then
+    warn "briefs 超软上限 (${brief_count} > 30) —— 该开一轮对齐会话，沉淀进 docs/ 后清理（briefs/README.md）"
+  fi
+fi
+
+# 6) docs 总篇数（软上限 → WARN）
+doc_total=$(find docs -type f -name '*.md' ! -name '_*' ! -name '*template*' ! -name 'README.md' 2>/dev/null | wc -l)
+say "INFO: docs 文档总数 ${doc_total} 篇（软上限 ${DOCS_SOFT_LIMIT}，standards/08 §2）"
+if [ "$doc_total" -gt "$DOCS_SOFT_LIMIT" ]; then
+  warn "docs 总数超软上限 (${doc_total} > ${DOCS_SOFT_LIMIT}) —— 触发整合评审"
+fi
+
+echo "──────────────────────────────"
+if [ "$fails" -gt 0 ]; then
+  echo "check-size: ${fails} 项超限，${warns} 项提醒 —— 阻断收尾（standards/08）"
+  exit 1
+fi
+echo "check-size: 全部通过${warns:+（${warns} 项提醒）}"
+exit 0
