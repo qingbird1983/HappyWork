@@ -1,43 +1,47 @@
 # 工作上下文交接卡
 
-- 更新：2026-10-30（会话主题：v2 设计评审 → V3 基线落盘 + 仓库治理初始化）
+- 更新：2026-10-30（会话主题：架构定稿 + Phase 1 施工设计 + 最小骨架实现）
 
 ## 当前阶段与状态（对照 roadmap 看板）
 
-- Phase 0 ✅ 完成（2026-10-30）：仓库初始化、V3 设计基线、治理规范落盘、git 启用（tag `phase-0.end`）
-- Phase 1（最小骨架）未开始；architecture/01~04 与 roadmap/00 处于**评审中**，定稿是 Phase 1 开工前置条件
-- 看板：`docs/roadmap/00-roadmap.md` §1
-- 版本控制状态：已启用 git（main 分支，首次提交含全部治理文件；briefs/ 按规则不入库）
+- Phase 1（最小骨架）**进行中**，分支 `feat/phase1-skeleton`（未合回 main）
+- 骨架代码已落地且门禁全绿；**范围合同验收 A1~A7 大多未逐条执行**（见"下一步"）
+- architecture/01~04、roadmap/00、phase-1 合同、design/phase-1/design.md 均**定稿**（2026-10-30 所有者放行"转定稿→写施工稿→开工"）
+- 版本控制：main @ `0ce4134`（定稿批次）；feat 分支 @ `f49a04c`（骨架）；无远端仓库
 
 ## 上一轮完成了什么（3~5 条）
 
-- v2 简报评审沉淀为 research/01；V3 架构基线落盘 architecture/01~04；治理初始化完成（Phase 0，tag `phase-0.end`）
-- 九项决策 ADR-0001~0009（技术栈 / 权限模型 / 双指纹+JCS / 路径规范化 / MVP 安全降级 / MIT / 前端 React+TS / 真机测试 DeepSeek / UI 参照 ZCode）
-- 调研沉淀：research/02（DeepSeek API 对接事实）、research/03（ZCode UI 信息结构观察——审批弹窗"label+description+作用域+deny 反馈"三要素、工具块摘要/展开）
-- **所有者授权**：开发期真机测试由 AI 会话执行（DeepSeek 真实 API，ADR-0008）；ZCode 截图按需向所有者索取（ADR-0009 流程）
-- briefs：v2 简报已标已沉淀；B-001（ZCode 参照物备忘，含本地路径，不入库）
+- 定稿：四篇架构 + roadmap + phase-1 合同转定稿；施工设计稿 `docs/design/phase-1/design.md`；ADR-0010（SQLite 驱动 modernc.org/sqlite，纯 Go 免 CGO）
+- 骨架：cmd/agent + internal/{desktop,agent,tool,workspace,storage,model/mock,singleinst} + migrations + frontend（React19+TS+Vite 灰壳，CSP + textContent 渲染）
+- 门禁：gofmt/vet/golangci-lint/go test 六包全绿；前端 prettier/eslint/tsc/vite build 全绿；`wails3 build` 产出 `bin/happywork.exe`（flag 冒烟通过）
+- mock Provider：内嵌剧本 greet/read_file/tool_result/long/boom，关键词选择；40ms delta 批量；工作区越界拒绝写 audit（A5 逻辑有测试覆盖）
+- 单实例锁：flock + focus.req 轮询（stdlib 不支持 Windows 命名管道监听 → P-002，architecture/04 与设计稿已同步）
 
 ## 下一步（按优先级，注明阻塞项）
 
-1. 所有者评审 architecture/01~04 与 roadmap/00，转**定稿**；阻塞：需所有者过目（可在下次会话逐篇走）
-2. 写 `docs/design/phase-1/` 施工设计稿（SQLite 驱动选型、mock Provider 行为定义、React 前端依赖准入与 eslint/prettier/tsc 配置、前端信息结构基线引用 research/03）；阻塞：第 1 步定稿
-3. Phase 1 开工：`git checkout -b feat/phase1-skeleton`
+1. **推远端跑 CI**（A1 三平台构建）：仓库还没有远端——所有者建 GitHub 私库后 push；linux webkitgtk job 允许首期红（ci.yml 已标 continue-on-error）
+2. **Windows 真机 GUI 验收**（可由 AI 会话执行，所有者机器）：启动 `bin/happywork.exe` 走 A2（mock 流式）、A3（重启恢复）、A4（双开聚焦）、A6（CSP 手工注入）；结果记入 `docs/design/phase-1/report.md`
+3. macOS 构建与公证演练：所有者侧（A1 组成部分）
+4. 全部验收过后：写 report.md → 合回 main → tag `phase-1.end` → 更新看板
+5. Phase 2 立项：DeepSeek Provider 接入（核对 env var 名 `DEEPSEEK_API_KEY`）、审批弹窗（research/03 三要素）、MCP stdio
 
 ## 未决问题
 
-- SQLite 驱动：modernc.org/sqlite（纯 Go、免 CGO）vs mattn/go-sqlite3（成熟、需 CGO）——Phase 1 设计稿决策
 - matchKey 是否纳入"内容信任级"维度——Phase 3 评审（architecture/03 §待决）
 - Hook 签名密钥签发方式（倾向本地生成 + TOFU）——Phase 3
-- 本机 DeepSeek 环境变量名确认（代码默认读 `DEEPSEEK_API_KEY`，支持配置覆盖；所有者已配置 key）——Phase 2 接入时核对
+- 本机 DeepSeek 环境变量名确认（代码默认读 `DEEPSEEK_API_KEY`，支持配置覆盖）——Phase 2 接入时核对
+- A6 CSP 的 `connect-src` 清单是否可按平台收窄——Phase 2 渲染安全时核对
 
 ## 关键提醒（坑/规范变更/易错点，链接 pitfalls 编号）
 
-- Wails v3 要求 Go ≥1.26，钉 minor 版本线；所有 Wails 调用必须走 `internal/desktop/` 适配层 → ADR-0001
-- 权限判定只认"工具映射表"这一个事实源，角色预设只能收紧；matchKey（粗）与 execHash（细，JCS/RFC 8785）不得混用 → ADR-0002/0003
-- 任何客体路径先过规范化管线再评估；Windows 大小写/8.3/junction 是已知逃逸向量 → ADR-0004
-- 路线图工期是降级后的可信版本；不要把外部 Hook、Windows 沙箱、完整快照"顺手"提前 → ADR-0005
-- ZCode 是 private 项目：参照只读信息结构，**绝不复制代码/视觉资产**；需要截图走 ADR-0009 流程（向所有者明说界面+状态）
-- DeepSeek key 只从环境变量读（默认 `DEEPSEEK_API_KEY`），严禁入库/入日志/入 transcript → ADR-0008、standards/06
-- 前端一律灰盒推进（默认样式、零视觉投入），审批弹窗与来源标记的信息完整性不降级 → roadmap Backlog"UI/UX 精修"
-- 删模板/占位文件后记得全局 grep 引用是否悬空 → P-001
-- 踩坑索引：P-001 初始化删模板文件后，残留引用会悬空（roadmap 曾引用 _phase-template.md）
+- Wails v3 钉 **v3.0.0**（CLI 与库同线）；所有 Wails 调用只在 `internal/desktop/` → ADR-0001
+- **CGO_ENABLED=0 是项目约束**：禁止引入 CGO 依赖（SQLite 用 modernc 纯 Go）→ ADR-0010
+- 构建入口 `wails3 build`（Taskfile 链）；`go build ./cmd/agent` 需先有 `frontend/dist`（embed；CI 里 wails3 build 自带前端步骤）
+- 前端调后端走 `Call.ByName("desktop.SessionService.X")`，方法名集中在 `frontend/src/api.ts`；生成绑定（frontend/bindings/，已 gitignore）暂不使用
+- mock 剧本选择：上一条是工具结果 → 固定 `tool_result` 剧本，否则按关键词（boom/long/read_file·读取/缺省 greet）——改剧本别破坏这个防死循环分支
+- 任何客体路径先过 `internal/workspace` 规范化管线；UNC/8.3/盘符相对路径直接拒绝 → ADR-0004
+- 权限判定只认工具映射表（Phase 3 接管，Phase 1 是硬编码边界检查）→ ADR-0002/0003
+- stdlib `net` 不支持监听 Windows 命名管道（"pipe"=内存管道）→ P-002
+- 删模板/占位文件后全局 grep 悬空引用 → P-001
+- ZCode 参照只读信息结构不搬代码（ADR-0009）；DeepSeek key 只从环境变量读不入库（ADR-0008、standards/06）
+- 前端灰盒推进：信息完整性不降级，视觉零投入 → roadmap Backlog
