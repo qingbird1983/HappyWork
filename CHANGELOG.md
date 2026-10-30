@@ -6,6 +6,17 @@
 
 ---
 
+## [0.1.011] - 2026-10-30
+
+### Phase 3「权限引擎与 Hook」验收通过（tag phase-3.end）
+
+- 所有者签收实现与验收报告：A1~A7 真机/自动化通过，A8 本地门禁与三平台 CI 全绿（[run 41066195833](https://github.com/qingbird1983/HappyWork/actions/runs/41066195833)）。
+- 实现完成：映射表驱动的权限引擎、三内置预设 + 严格 `presets.d/*.yaml`、持久规则（短语 + 可撤销）、内容信任强制 once、JCS execHash/TOCTOU、DIM4 限额、编译期内置 Hook（五点、优先级、超时、panic、失败策略、secret-scan）、迁移 0003、桌面 API 与最小前端（预设选择/规则面板/审批持久短语/信任与限额警示/权限事件徽章）。
+- 真机验收（隔离数据目录 + 真实 DeepSeek）确认预设落库、三作用域审批、execHash/content_trust 入库、Hook 指纹上屏与日志；发现并修复 2 个缺陷：纯 tool_calls 回合未落 assistant 消息导致 DeepSeek 400；自定义 once 预设仍提供持久选项。另将未知外部动作纳入副作用判定。
+- 遗留：持久短语/secret-scan 的 GUI 自动化提交受宿主安全分类器限制，由集成测试覆盖；工具决策徽章仅在运行期展示。报告见 [report.md](docs/design/phase-3/report.md)。
+
+---
+
 ## [0.1.010] - 2026-10-30
 
 ### Phase 3「权限引擎与 Hook」立项放行

@@ -1,6 +1,6 @@
 # Phase 3：权限引擎与 Hook
 
-- 状态：定稿（2026-10-30；所有者放行，随立项生效）
+- 状态：完成（2026-10-30；A1~A8 通过，CI run 41066195833 全绿，tag `phase-3.end`）
 - 日期：2026-10-30
 - 关联：[00-roadmap](00-roadmap.md) §1；[architecture/03](../architecture/03-permission-and-approval.md)、[04](../architecture/04-security-and-hooks.md)；[ADR-0002](../adr/ADR-0002-unified-permission-model.md)、[ADR-0003](../adr/ADR-0003-dual-fingerprint.md)、[ADR-0004](../adr/ADR-0004-path-canonicalization.md)、[ADR-0012](../adr/ADR-0012-jcs-implementation.md)、[ADR-0013](../adr/ADR-0013-hook-trust-model.md)、[ADR-0014](../adr/ADR-0014-content-trust-scope.md)；施工设计 [design.md](../design/phase-3/design.md)、[hooks.md](../design/phase-3/hooks.md)
 
@@ -53,14 +53,14 @@ Phase 2 证明"模型能在人的控制下真做事"；Phase 3 证明"**控制�
 
 ## 5. 验收场景
 
-- [ ] A1 映射表与合并：每个内置工具、MCP 变体与预留 deny 行都有 golden 用例；未声明工具 deny；最严合并、条件降级、可逆性修正（不可逆 → Block、禁自动重试）符合规则表。
-- [ ] A2 预设：三个内置预设与 YAML 自定义预设可用；非法 YAML/放宽规则被拒绝整份并提示；会话预设落库；预设只收紧。
-- [ ] A3 持久规则：弹窗内输入确认短语才创建；跨会话按 matchKey 命中并记 Info；可在界面查看/删除；deny/不可逆操作不可创建；不可信内容在场时不命中持久规则。
-- [ ] A4 execHash/TOCTOU：审批后改参被 `ErrArgsDrift` 拒绝；Hook 只改白名单字段且改参有审计；execHash 入审批与工具记录；JCS 官方向量与 fuzz 通过；非 I-JSON 数字被拒绝。
-- [ ] A5 Hook 生命周期：五个 Hook 点按优先级执行；超时、panic、失败策略（warn/deny/fail_closed）符合契约；after 不可改参改结果；配置非法时 Hook 整体禁用并提示；配置指纹写入日志。
-- [ ] A6 限额：自动放行超限升级 ask（不可逆行 deny）；按会话隔离；重启归零；事件与审计可见；无静默截断。
-- [ ] A7 信任与路径：MCP 不可信内容触发的新写/外部操作强制 once 且弹窗有来源警示；symlink/junction/8.3/大小写/UNC 替换在执行前被拒绝并留痕；敏感文件硬拒不变。
-- [ ] A8 门禁：golden/fuzz/TOCTOU/Hook/限额/迁移测试全绿；`gofmt/vet/golangci-lint/go test/check-size/render-safety` + 前端 lint/typecheck/format/test/build 全绿；三平台 `wails3 build` 与 CI 全绿；验收报告落盘。
+- [x] A1 映射表与合并：每个内置工具、MCP 变体与预留 deny 行都有 golden 用例；未声明工具 deny；最严合并、条件降级、可逆性修正（不可逆 → Block、禁自动重试）符合规则表。
+- [x] A2 预设：三个内置预设与 YAML 自定义预设可用；非法 YAML/放宽规则被拒绝整份并提示；会话预设落库；预设只收紧。
+- [x] A3 持久规则：弹窗内输入确认短语才创建；跨会话按 matchKey 命中并记 Info；可在界面查看/删除；deny/不可逆操作不可创建；不可信内容在场时不命中持久规则。
+- [x] A4 execHash/TOCTOU：审批后改参被 `ErrArgsDrift` 拒绝；Hook 只改白名单字段且改参有审计；execHash 入审批与工具记录；JCS 官方向量与 fuzz 通过；非 I-JSON 数字被拒绝。
+- [x] A5 Hook 生命周期：五个 Hook 点按优先级执行；超时、panic、失败策略（warn/deny/fail_closed）符合契约；after 不可改参改结果；配置非法时 Hook 整体禁用并提示；配置指纹写入日志。
+- [x] A6 限额：自动放行超限升级 ask（不可逆行 deny）；按会话隔离；重启归零；事件与审计可见；无静默截断。
+- [x] A7 信任与路径：MCP 不可信内容触发的新写/外部操作强制 once 且弹窗有来源警示；symlink/junction/8.3/大小写/UNC 替换在执行前被拒绝并留痕；敏感文件硬拒不变。
+- [x] A8 门禁：golden/fuzz/TOCTOU/Hook/限额/迁移测试全绿；`gofmt/vet/golangci-lint/go test/check-size/render-safety` + 前端 lint/typecheck/format/test/build 全绿；三平台 `wails3 build` 与 CI 全绿；验收报告落盘。
 
 ## 6. 依赖与风险
 

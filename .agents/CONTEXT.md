@@ -1,49 +1,42 @@
 # 工作上下文交接卡
 
-- 更新：2026-10-30（会话主题：Phase 3 立项放行，权限引擎与 Hook 开工）
+- 更新：2026-10-30（会话主题：Phase 3 实现、真机验收、签收与收尾）
 
 ## 当前阶段与状态（对照 roadmap 看板）
 
 - **Phase 1 ✅ 完成（tag `phase-1.end`）**
 - **Phase 2 ✅ 完成（tag `phase-2.end`）**：8/8 验收，报告定稿，main CI 绿。
-- **Phase 3（权限引擎与 Hook）进行中（2026-10-30 立项）**：范围合同、设计、Hook 设计、ADR-0012/0013/0014 已定稿；6 项决策已放行；依赖已登记。
-- 分支：`feat/phase3-permission-engine`；main 保持 phase-2.end 基线。
-- 远端：`git@github.com:qingbird1983/HappyWork.git`（main 常绿）
-- 工作约定：验收/真机测试 AI 自跑；所有者签收后才 commit/push/tag；文档先行已满足。
+- **Phase 3 ✅ 完成（tag `phase-3.end`）**：A1~A8 通过；CI run 41066195833 全绿；报告 [docs/design/phase-3/report.md](../docs/design/phase-3/report.md)。
+- 分支：`feat/phase3-permission-engine` 已合并 main；main 常绿；下一阶段 Phase 4 尚未立项。
 
 ## 上一轮完成了什么（3~5 条）
 
-- 起草并放行 Phase 3：完整权限引擎（映射表/预设/持久规则/DIM4）、内容信任级、JCS execHash/TOCTOU、编译期内置 Hook、迁移 0003、前端最小界面。
-- 6 项决策：JCS 用 RFC 8785 参考实现；Hook 仅编译期内置、签名延后；内容信任级为条件不并入 matchKey；持久规则仅可逆写；三预设 + 只收紧自定义；限额只约束自动放行、工作区外读取仍硬拒。
-- 依赖登记：JCS（Apache-2.0，固定伪版本）、yaml.v3（MIT/Apache-2.0）；文档状态与看板已更新。
-- Phase 2 收尾：合并 main、tag `phase-2.end`、三平台 CI 全绿（run 41054482312/41055399869）。
+- 实现完整权限引擎：映射表唯一事实源、三内置预设 + 严格 `presets.d/*.yaml`、条件、DIM4 限额、持久规则（短语 `允许持久`、可查可删）、内容信任强制 once。
+- 实现 JCS execHash/TOCTOU 管道（RFC 8785 + I-JSON、审批/工具记录落 hash、执行前重算与路径身份复核）与编译期内置 Hook（五点、优先级、超时、panic、warn/deny/fail_closed、改参白名单、secret-scan、配置指纹）。
+- 桌面 API 与前端：预设选择与落库、规则面板、审批持久短语/信任/限额警示、`session:permission` 事件徽章。
+- 真机验收（隔离 APPDATA + DeepSeek）：默认预设写文件三作用域审批、session 授权写成功、exec_hash 64 hex、content_trust 入库、Hook 指纹日志/顶栏一致；修复纯 tool_calls 未落 assistant 消息与 once 预设仍提供持久两个缺陷，另将 MCP unknown 纳入副作用。
+- 文档收尾：Phase 3 报告定稿、CHANGELOG 0.1.011、看板/路线图勾选、P-009/P-010 沉淀、H-006 归档。
 
-## 下一步（Phase 3 实现顺序，含验收映射）
+## 下一步（按优先级，注明阻塞项）
 
-1. **迁移 0003 + storage**：`sessions.preset`、`approvals.exec_hash/content_trust`、`tool_calls.exec_hash`、`permission_rules` CRUD 与升级测试（A3/A4）。
-2. **internal/jcs**：I-JSON 校验、JCS 包装、hash、官方向量/fuzz（A4）。
-3. **permission 引擎**：映射表注册校验、预设加载/只收紧、条件、最严合并、可逆修正、限额（A1/A2/A6）。
-4. **持久规则 + 审批扩展**：短语校验、命中/撤销、信任闩锁与作用域降级（A3/A7）。
-5. **hook 框架**：接口、runner（顺序/超时/panic/失败策略）、严格配置、指纹、secret-scan（A5）。
-6. **agent 管道**：Hook→规范化→JCS hash→引擎→审批→执行前校验→执行→after；`session:permission` 事件（A4/A7）。
-7. **桌面 + 前端**：预设选择、规则面板、审批持久短语/信任警示、限额提示（A2/A3/A7）。
-8. **门禁与验收**：golden/fuzz/TOCTOU/hook/quota/迁移测试、前端五连、三平台 CI、真机验收与报告（A8）。
+1. Phase 4 立项评审：不可变审计/hash-chain、正式回滚、遗留风险（路径残窗、配额持久化、工具决策徽章持久展示）；需所有者放行后开工。
+2. 可选真机补录：持久短语与 secret-scan 的 GUI 提交（本轮受宿主安全分类器限制，由集成测试覆盖）。
+3. 生成式绑定仍不可用；继续使用集中式 `Call.ByName`（`frontend/src/api.ts`）。
 
 ## 未决问题
 
-- JCS 上游无 v1 tag：固定伪版本；停止维护时按 ADR-0012 迁移。
-- 配额内存计数重启归零：Phase 4 评估持久化。
-- 路径二次校验与执行之间仍有残窗：沙箱前承认。
-- 外部进程 Hook/签名：独立 ADR（ADR-0013 已限定本期）。
+- 工具决策徽章仅在运行期展示；transcript 重载后保留信任徽章，不保留 ask/session/限额徽章 → Phase 4 评估消息模型或回放。
+- JCS 上游无 v1 tag；配额内存计数重启归零；路径二次校验与执行之间仍有残窗（沙箱前承认）。
+- 外部进程 Hook/签名/TOFU：独立 ADR，不在 Phase 3。
 
 ## 关键提醒（坑/规范变更/易错点，链接 pitfalls 编号）
 
+- 纯 tool_calls 回合必须落 assistant 消息（含 ToolCallsJSON），取消回合不得落悬空 tool_calls（P-009）。
+- 预设收紧到 once 时必须关闭持久选项（P-010）；任何放宽通道都要看收紧后的作用域。
 - 审批快照只在消费决策时比较一次（P-006）；终态先清 busy（P-005）。
 - 崩溃恢复只标活动状态；运行中工具记 unknown（P-008）。
 - Windows 控制台子进程必须 HideWindow；强杀才 taskkill /T /F（P-007）。
 - 敏感文件硬拒不提供审批放行；密钥只走环境变量，不入库/日志/transcript。
-- 渲染一律纯文本；`scripts/check-render-safety.sh` 不得放宽。
-- 自动化测试/CI 禁外网；只有 manual 标签真机测试可调 DeepSeek。
-- JCS 前必须拒绝非 I-JSON 数字；Hook 改参仅 before_tool 白名单，after 只读。
-- 持久规则不覆盖 deny/不可逆；不可信内容在场时不命中 session/persistent。
+- 渲染一律纯文本；Hook 改参仅 before_tool 白名单；after 只读；审计不落原文。
+- 自动化测试/CI 禁外网；只有 manual 标签真机测试可调 DeepSeek；GUI 验收使用隔离 APPDATA。
 - 文档与沟通中文；代码/标识符/commit 英文；feature 分支 + 签收后推送。
