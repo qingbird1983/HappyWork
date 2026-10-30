@@ -1,14 +1,14 @@
 # Phase 2 验收报告
 
-- 状态：待签收（2026-10-30；本地实现与验收完成，三平台 CI 待分支推送后补绿）
+- 状态：定稿（2026-10-30；CI run 41054482312 全绿）
 - 日期：2026-10-30
-- 关联：[phase-2-controlled-execution.md](../../roadmap/phase-2-controlled-execution.md) §5（A1~A8）；[design.md](design.md)；[mcp.md](mcp.md)；[ADR-0011](../../adr/ADR-0011-mcp-dual-era-stdio.md)
+- 关联：[phase-2-controlled-execution.md](../../roadmap/phase-2-controlled-execution.md) §5（A1~A8）；[design.md](design.md)；[mcp.md](mcp.md)；[ADR-0011](../../adr/ADR-0011-mcp-dual-era-stdio.md)；[CI run 41054482312](https://github.com/qingbird1983/HappyWork/actions/runs/41054482312)
 - 分支：`feat/phase2-controlled-execution`
 - 验收方式：所有者 2026-10-30 授权 AI 会话自跑真机验收。证据来源：自动化测试、真机截图、SQLite 落库、启动日志、门禁输出；真机产物保存在本地 `.task/phase2-acceptance/`（不入库）。
 
 ## 1. 验收结论
 
-**A1~A7 通过；A8 本地门禁与 Windows 构建通过，三平台 CI 待推送后确认。** A1（一票否决）通过：真实 DeepSeek 完成读/列目录 + 审批写入闭环，usage 与费用入库，日志/数据库/transcript 未出现 key。A8（一票否决）尚差 CI 一项，属于流程未执行而非实现缺陷（推送需所有者签收）。
+**8/8 通过，Phase 2 达成。** 两项一票否决均通过：A1 真实 DeepSeek 完成读/列目录 + 审批写入闭环，usage 与费用入库，日志/数据库/transcript 未出现 key；A8 本地门禁、Windows 构建与三平台 CI（check + windows/macos/ubuntu build）全绿。
 
 | # | 验收场景 | 结果 | 证据 |
 |---|---|---|---|
@@ -19,9 +19,7 @@
 | A5 | 崩溃恢复 | ✅ | 真机在审批等待中强杀 → 重启显示 interrupted → 继续 → 注入"结果未知" → 完成；新增集成测试覆盖 `running_tool` 强杀 → `tool_calls.status=unknown` |
 | A6 | 渲染安全 | ✅ | vitest 10 项注入断言 + 静态门禁；真机 MCP 注入 `<script>` 以纯文本显示，模型将其当数据处理 |
 | A7 | 预算 | ✅ | 单测覆盖轮次/工具数/token/时长/费用五条上限，均为 paused + 一次宽限，无静默截断；UI 按原因显示"继续（一次宽限）/继续（重新审批）" |
-| A8 | 门禁（一票否决） | ◐ | gofmt / vet / golangci-lint / test / check-size / render-safety 全绿；前端 lint/typecheck/format/test/build 全绿；Windows `wails3 build` 通过；三平台 CI 待推送 |
-
-图例：✅ 通过；◐ 部分完成（待流程补全）。
+| A8 | 门禁（一票否决） | ✅ | 本地 fmt/vet/lint/test/check-size/render-safety + 前端五连全绿；CI run 41054482312 的 check 与三平台 build 全部 success |
 
 ## 2. A1 明细与费用
 
@@ -95,13 +93,12 @@ go test -tags manual -run TestDeepSeekLive -v ./internal/agent
 | `bash scripts/check-render-safety.sh` | ok |
 | 前端 lint / typecheck / format / test / build | 全部通过（vitest 10/10） |
 | `wails3 build`（Windows） | 通过，产物 `bin/happywork.exe` |
-| 三平台 CI | 待推送 `feat/phase2-controlled-execution` 后验证 |
+| 三平台 CI | ✅ [run 41054482312](https://github.com/qingbird1983/HappyWork/actions/runs/41054482312)：check + windows/macos/ubuntu build 全 success |
 
 ## 4. 偏差与遗留
 
 | 项 | 说明 | 去向 |
 |---|---|---|
-| 三平台 CI 未跑 | 分支未推送（所有者签收后才推送） | 签收后推送补绿；失败则当轮修复 |
 | 生成式绑定仍不可用 | `wails3 generate bindings` 输出 `1 Package, 0 Services, 0 Methods`，并提示根目录无 Go 文件；internal 服务未被识别 | 保留 `Call.ByName`（集中在 `frontend/src/api.ts`）；绑定生成留待 Wails 修复或 Phase 3 评估 |
 | 真机强杀点在审批等待态 | 未做第二次 GUI 的 `running_tool` 强杀 | 已用集成测试覆盖同一条启动恢复代码路径；如需 GUI 证据可后续补跑 |
 | 会话作用域仅单测 | 真机只验证了 once | session 作用域由 `TestWriteSessionScope` 覆盖（同目录第二次不再询问 + 授权查询） |

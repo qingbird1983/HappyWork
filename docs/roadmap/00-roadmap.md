@@ -22,7 +22,7 @@ graph LR
 |---|---|---|---|
 | Phase 0 | 仓库初始化、V3 设计基线、治理规范落盘 | — | ✅ 完成（2026-10-30） |
 | [Phase 1](phase-1-minimal-skeleton.md) | 最小骨架：Wails 壳 + SQLite + mock 模型 + 只读工具 + 单实例锁 | 1~2 周 | ✅ 完成（2026-10-30，tag `phase-1.end`；[报告](../design/phase-1/report.md)） |
-| [Phase 2](phase-2-controlled-execution.md) | 受控执行闭环：Actor 状态机 + DeepSeek + 本地工具 + MCP stdio + 审批交互 + 渲染安全 | 2~3 周 | 验收中（2026-10-30 AI 自验完成，待签收 + 三平台 CI；[报告](../design/phase-2/report.md)） |
+| [Phase 2](phase-2-controlled-execution.md) | 受控执行闭环：Actor 状态机 + DeepSeek + 本地工具 + MCP stdio + 审批交互 + 渲染安全 | 2~3 周 | ✅ 完成（2026-10-30，tag `phase-2.end`；[报告](../design/phase-2/report.md)） |
 | Phase 3 | 权限引擎（映射表/双指纹/路径规范化）+ 进程内 Hook + TOCTOU 管道 | 2 周 | 未开始 |
 | Phase 4 | 加固 a：不可变审计 + 备份式回滚 + 三平台签名 CI | 2 周 | 未开始 |
 | Phase 5 | 加固 b：OS 沙箱（macOS Seatbelt + Linux Landlock） | 3~6 周 | 未开始 |

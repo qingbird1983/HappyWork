@@ -6,13 +6,23 @@
 
 ---
 
+## [0.1.009] - 2026-10-30
+
+### Phase 2「受控执行闭环」验收通过（tag phase-2.end）
+
+- 所有者签收实现与验收报告：8/8 通过，A1（真实 DeepSeek 闭环）与 A8（本地/CI/三平台构建）两项一票否决均过；真机验收费用约 $0.0009。
+- 三平台 CI run 41054482312 全绿（check + windows/macos/ubuntu build）；分支合并 main 并打 annotated tag `phase-2.end`。
+- 下一阶段：Phase 3（完整权限引擎 + 进程内 Hook + TOCTOU）；生成式绑定与 GUI 版 `running_tool` 补跑等遗留见[报告](docs/design/phase-2/report.md)偏差表。
+
+---
+
 ## [0.1.008] - 2026-10-30
 
-### Phase 2「受控执行闭环」实现与验收（待签收）
+### Phase 2「受控执行闭环」实现与验收
 
 - 实现完成：DeepSeek 流式 + function calling（usage/费用入库，key 只走 `DEEPSEEK_API_KEY`）、完整会话状态机（审批/暂停/保存/中断）、写文件/列目录/分页读、单次与本会话审批、敏感文件硬拒、MCP stdio 双代协议与逐条审批、预算五条上限 + 一次宽限、崩溃恢复、纯文本渲染与 CSP 加固。
 - 真机验收 A1~A7 通过：真实模型完成"读 → 列目录 → 审批写文件"闭环；MCP 工具被发现并调用，注入内容按纯文本显示；审批弹窗期间强杀后可从"上次中断"继续。验收费用约 $0.0009（[报告](docs/design/phase-2/report.md)）。
-- A8 本地门禁全绿（fmt/vet/lint/test/check-size/render-safety + 前端五连 + Windows 构建）；三平台 CI 待所有者签收后推送验证。
+- A8 本地门禁全绿（fmt/vet/lint/test/check-size/render-safety + 前端五连 + Windows 构建）；三平台 CI run 41054482312 全绿。
 - 真机与测试期间修复 8 类缺陷（终态忙标志、审批快照时序、附件路径、MCP 控制台窗口、matchKey 落库、重启误标空闲会话、子进程清理/日志上限、MCP 失败提示），并补预算与 running_tool 崩溃恢复测试。
 - 遗留：生成式绑定仍只产出事件（保留 `Call.ByName`）；`running_tool` 强杀由集成测试覆盖，真机强杀点为审批等待态。
 
