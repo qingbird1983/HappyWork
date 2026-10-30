@@ -40,15 +40,15 @@
 | 文档 | `docs/design/phase-1/` 设计稿；`report.md` 阶段进度报告 |
 | 其他 | 三平台构建脚本；mock 剧本内嵌 `internal/model/mock/scripts/`（原定根级 fixtures/ 并入，见 design/phase-1 §3） |
 
-## 5. 验收场景（逐条可执行；验收结果记入 report.md）
+## 5. 验收场景（逐条可执行；验收结果记入 [report.md](../design/phase-1/report.md)——7/7 通过）
 
-- [ ] A1：Windows / macOS / Linux 三平台 `wails3 build` 全部通过（macOS 含公证流程演练）【一票否决】
-- [ ] A2：提交任务 → mock 模型流式回复 → UI 流式显示（事件批量 flush，无逐 token 卡顿）
-- [ ] A3：退出重开应用 → 会话列表与 transcript 完整恢复（transcript 重放，不依赖 UI 缓存）
-- [ ] A4：启动第二实例 → 检测锁 → 第一实例窗口被聚焦 → 第二实例自动退出（Windows 实测）
-- [ ] A5：`read_file` 读工作区内文件成功；读工作区外文件被拒且留痕
-- [ ] A6：前端 CSP 生效——注入 `<script>` 的模型输出不被执行
-- [ ] A7：`go vet` / `golangci-lint` / `go test ./...` / `scripts/check-size` 全绿（CI 门禁四连）
+- [x] A1：Windows / macOS / Linux 三平台 `wails3 build` 全部通过（macOS 含公证流程演练）【一票否决】
+- [x] A2：提交任务 → mock 模型流式回复 → UI 流式显示（事件批量 flush，无逐 token 卡顿）
+- [x] A3：退出重开应用 → 会话列表与 transcript 完整恢复（transcript 重放，不依赖 UI 缓存）
+- [x] A4：启动第二实例 → 检测锁 → 第一实例窗口被聚焦 → 第二实例自动退出（Windows 实测）
+- [x] A5：`read_file` 读工作区内文件成功；读工作区外文件被拒且留痕
+- [x] A6：前端 CSP 生效——注入 `<script>` 的模型输出不被执行
+- [x] A7：`go vet` / `golangci-lint` / `go test ./...` / `scripts/check-size` 全绿（CI 门禁四连）
 
 ## 6. 依赖与风险
 

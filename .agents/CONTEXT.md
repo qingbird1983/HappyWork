@@ -4,11 +4,11 @@
 
 ## 当前阶段与状态（对照 roadmap 看板）
 
-- Phase 1（最小骨架）**进行中**，分支 `feat/phase1-skeleton`（未合回 main）
-- 验收进度：**A2/A3/A4/A5 已由 AI 会话自验通过**（A4 有双实例+聚焦日志实锤；A5 有审计落库实锤；A3 数据层+重启实测）；A6 代码基线就位（CSP+textContent）；**A1 等 CI（需远端仓库）**；A7 本地全绿
+- **Phase 1（最小骨架）✅ 完成（2026-10-30，tag `phase-1.end`）**：7/7 验收通过，报告见 design/phase-1/report.md
+- 远端仓库已建并推送：`git@github.com:qingbird1983/HappyWork.git`（main + feat/phase1-skeleton 已合回 main）
 - **工作约定（所有者 2026-10-30 指示）**：验收/真机测试一律 AI 会话自跑，不请所有者点 GUI；进程/日志/落库取证优先
-- architecture/01~04、roadmap/00、phase-1 合同、design/phase-1/design.md 均**定稿**（2026-10-30 所有者放行）
-- 版本控制：main @ `0ce4134`；feat 分支骨架 + 三轮修复（最新见 git log）；无远端仓库
+- architecture/01~04、roadmap/00、phase-1 合同、design/phase-1/{design,report}.md 均**定稿**
+- 下一阶段 **Phase 2（受控执行闭环）尚未立项**——立项须先写阶段文档（roadmap §2 流程）
 
 ## 上一轮完成了什么（3~5 条）
 
@@ -20,10 +20,10 @@
 
 ## 下一步（按优先级，注明阻塞项）
 
-1. **所有者建远端仓库 → push → CI 首跑**（A1 三平台构建矩阵；阻塞：仓库未建。linux job 允许首期红）
-2. **A6 收尾**：CSP 注入手工用例随下次 GUI 冒烟执行（textContent 基线已就位）
-3. 写 `docs/design/phase-1/report.md`（验收结果逐条落库）→ 合回 main → tag `phase-1.end` → 看板更新
-4. Phase 2 立项：DeepSeek Provider（核对 env var 名）、审批弹窗（research/03 三要素）、MCP stdio；届时解决 `wails3 generate bindings` 不识别 internal/ 服务的问题
+1. **Phase 2 立项**：写 `docs/roadmap/phase-2-*.md` 范围合同 + `docs/design/phase-2/` 施工设计稿（DeepSeek Provider 接入——届时核对 env var 名 `DEEPSEEK_API_KEY`；Actor 完整状态机；四维审批弹窗对齐 research/03 三要素；MCP stdio；渲染安全含 A6 注入用例）
+2. Phase 2 设计定稿（所有者过目）→ `feat/phase2-*` 开工
+3. 遗留跟催：macOS 公证演练（所有者开发者凭据，Phase 4 前置）；`wails3 generate bindings` 不识别 internal/ 服务（Phase 2 切换生成式绑定时解决）
+4. 发布工程（不急）：actions 升级消除 Node20 弃用告警；ubuntu-latest 迁移 26 的适配观察
 
 ## 未决问题
 
