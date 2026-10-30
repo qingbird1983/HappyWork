@@ -1,5 +1,23 @@
-# 换行纪律：文本自动归一，脚本类强制 LF（Windows checkout 后 bash 脚本才能执行）
+# 换行纪律：文本自动归一，源码与配置类强制 LF。
+# 为什么不只靠 `* text=auto`：Windows 上 core.autocrlf=true 会把 checkout 出来的源码写成
+# CRLF，于是本机 `gofmt -l` 与 `prettier --check` 全线误报（仓库里其实是 LF），
+# 每次切分支还会留下一堆"只改了换行"的幻影 diff。强制 eol=lf 后本地与 CI 看的是同一份字节。
 * text=auto
 *.sh text eol=lf
 scripts/* text eol=lf
 migrations/*.sql text eol=lf
+*.go text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.css text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.html text eol=lf
+*.sql text eol=lf
+*.nsh text eol=lf
+*.plist text eol=lf
+*.md text eol=lf
+*.mod text eol=lf
+*.sum text eol=lf

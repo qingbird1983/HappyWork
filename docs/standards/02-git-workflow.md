@@ -5,7 +5,7 @@
 
 ## 1. 分支模型
 
-- `main`：常绿分支，任何时候 CI 应可通过。
+- `main`：常绿分支。"绿"的事实来源是 **本地同源门禁 `bash scripts/gate.sh --race` 全绿**（合并前必须亲自跑一次）+ **里程碑时的远端 CI 绿**（`workflow_dispatch`）。远端 CI 不再每轮 push 自动触发，因此"没看到红"不等于"没人验证过"（[ADR-0018](../adr/ADR-0018-local-first-gate-and-on-demand-ci.md)）。
 - 一切变更（含文档）经 feature 分支合并入 main；禁止直接 push 到 main。
 - 分支生命周期短平快：一个分支对应一个可独立描述的变更集；完成即合并，不长期滞留。
 

@@ -257,6 +257,21 @@ func TestApprovalTimeoutPauseResume(t *testing.T) {
 	waitTimer(t, clock)
 	clock.Advance(5 * time.Minute)
 	waitState(t, s, StatePaused)
+	// The paused notice must already be in the event stream by the time a paused
+	// state is observable; otherwise the GUI renders a session frozen for no
+	// reason. Under parallel load the old order (state first, notice after) made
+	// this window visible and the count below read 0.
+	pausedEvent := f.emitter.firstIndex(func(name string, _ any) bool { return name == EventPaused })
+	pausedState := f.emitter.firstIndex(func(name string, payload any) bool {
+		sp, ok := payload.(StatePayload)
+		return name == EventState && ok && sp.State == StatePaused
+	})
+	if pausedEvent < 0 {
+		t.Fatal("session is paused but no paused event was emitted")
+	}
+	if pausedState >= 0 && pausedEvent > pausedState {
+		t.Fatalf("paused event (idx %d) must precede the paused state event (idx %d)", pausedEvent, pausedState)
+	}
 	if n := f.emitter.count(EventPaused); n != 1 {
 		t.Fatalf("paused events = %d", n)
 	}

@@ -425,8 +425,10 @@ func (s *Session) checkWallClock(ctx context.Context) error {
 // pauseForBudget parks the actor on a budget pause. Resume applies one grace
 // unless the item was already graced, in which case the run fails.
 func (s *Session) pauseForBudget(ctx context.Context, item budgetItem, detail string) error {
-	s.setState(StatePaused)
+	// Same invariant as the approval timeout: the paused event must already be
+	// out there before observers can read StatePaused.
 	s.mgr.emitEvent(s.info.ID, EventPaused, PausedPayload{SessionID: s.info.ID, Reason: "budget", Detail: detail})
+	s.setState(StatePaused)
 	for {
 		select {
 		case <-ctx.Done():

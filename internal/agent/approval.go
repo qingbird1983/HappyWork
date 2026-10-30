@@ -146,12 +146,16 @@ outer:
 				}
 				return d, nil
 			case <-timer:
-				s.setState(StatePaused)
+				// Emit the paused event *before* the state flips. Observers (the GUI
+				// status line and this package's tests) treat "state == paused" as
+				// proof that the reason was already delivered; flipping the state
+				// first leaves a window with a frozen session and no pause reason.
 				s.mgr.emitEvent(s.info.ID, EventPaused, PausedPayload{
 					SessionID: s.info.ID,
 					Reason:    "approval_timeout",
 					Detail:    "审批等待超过 " + timeout.String() + "；可继续或取消",
 				})
+				s.setState(StatePaused)
 				// Park until the user resumes (re-ask), decides late, or cancels.
 				for {
 					select {

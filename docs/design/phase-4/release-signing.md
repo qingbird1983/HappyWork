@@ -18,6 +18,8 @@
 - **dry-run**：手动 `workflow_dispatch` 触发。没有标签就没有"正式"语义，因此 dispatch 一律是 dry-run：构建/临时凭据签名/验签，产物标签为 `dry-run-preview`，`release` job 不运行。用于 A6。
 - **触发前提**：`workflow_dispatch` 只承认**默认分支上存在**的 workflow 文件，`--ref` 指向 feature 分支会返回 `404 workflow not found on the default branch`。所以 A6 的证据只能在 `release.yml` 合入 main 之后取得；在此之前本流水线的任何命令、任务名与产物名都只有本机依据，没有远端运行证据（P-015）。
 - **阶段标签**（`phase-N.end`）不触发发布。
+- **成本与平台范围（ADR-0018）**：`workflow_dispatch` 带 `platforms` 选项，**默认只跑 `windows`**（首发平台），`macos`/`linux` 显式勾选才跑；`v*` 正式标签仍然三平台齐跑、缺任一即失败，标准没有放宽。每个 job 必须有 `timeout-minutes`，两个 workflow 都有 `concurrency` + `cancel-in-progress`。Actions 分钟按 Linux 1× / Windows 2× / macOS 10× 计费，因此日常门禁在本地 `bash scripts/gate.sh` 完成，远端只在里程碑触发。
+- **已知遗留**：`linux` job 依赖的 `dpkg-sig` 在当前 `ubuntu-latest`（Ubuntu 26.04）镜像里装不到（`E: Unable to locate package dpkg-sig`，run `41102612818`）。按上面的默认范围它现在不会被触发，缺陷登记在 backlog，等平台范围扩大时连同 Linux 签名方式一起重做。
 - 版本号变更流程：更新 `build/config.yml` + `CHANGELOG.md` → `wails3 task common:update:build-assets` 重新生成资产 → 提交 → 打 tag；tag 与配置文件不一致即失败，不做自动改写。
 - 版本门禁由 `scripts/check-version.sh` 执行：除比较 `build/config.yml`，还要确认 `build/windows/info.json`、`build/windows/nsis/wails_tools.nsh`、`build/linux/nfpm/nfpm.yaml`、`build/darwin/Info.plist` 都写了同一版本。Phase 4 立项时这些生成物仍带着 `wails3 init` 模板值（`happywork.exe`、"My Company"、0.1.0），与配置里的 0.0.1 不一致；只校验配置会让发布物自报错误版本。
 - 产物文件名由 Wails 决定，是小写项目名：`bin/happywork.exe`、`bin/happywork-amd64-installer.exe`、`bin/happywork.app`、`bin/happywork.dmg`、`bin/happywork_*.deb`、`bin/happywork-*.rpm`、AppImage 名由 linuxdeploy 生成；因此 workflow 对安装包与 AppImage 使用通配匹配，并在计数为 0 时失败而不是静默跳过。
@@ -69,7 +71,11 @@ jobs:
 
 ### 4.3 dry-run
 
-- `New-SelfSignedCertificate -Type CodeSigningCert` 生成临时证书 → 导出 PFX → 导入 `Cert:\CurrentUser\Root` → 用同一 `wails3 tool sign` 签名 → `signtool verify /pa /all`。
+- 临时证书**只在内存里构造**：`CertificateRequest`（RSA 2048 + SHA-256 + 代码签名 EKU `1.3.6.1.5.5.7.3.3`）→ `CreateSelfSigned` → 导出 PFX 到 `$RUNNER_TEMP`。全程**不写任何证书存储**。
+- 签名仍然走真实命令：`wails3 tool sign --input bin/happywork.exe --certificate <临时pfx> --password <口令> --timestamp <URL>`，安装包同样处理。
+- 验签在 dry-run 路径改用 `Get-AuthenticodeSignature`，断言四件事：签名存在、签名者指纹等于本次生成的临时证书、具备代码签名 EKU、状态只允许 `Valid` 或 `NotTrusted`（自签证书不在公共信任链里，`NotTrusted` 是预期结果；`HashMismatch`/`NotSigned` 才说明流水线坏了）。`signtool verify /pa /all` 只在真实证书（正式标签）路径执行。
+- 为什么不再走 `/pa`：原设计"导入 `Cert:\CurrentUser\Root` 后让 `signtool /pa` 验真链路"在无人值守 runner 上会弹出系统确认对话框，**没有任何输出地挂死 63 分钟**才被平台掐掉（run `41102612818`，约 133 分钟 Windows 额度）——见 P-016 与 [ADR-0018](../../adr/ADR-0018-local-first-gate-and-on-demand-ci.md)。
+- EKU 判定用 OID 而非 `FriendlyName`：后者随系统显示语言变化（中文 Windows 上是"代码完整性"），拿它断言会造成假失败。
 - 临时证书只存在 runner；dry-run 产物标签为 `dry-run-preview`，`release` job 只下载 `*-release`，因此不可能被误发布。
 
 ## 5. macOS：Developer ID + 公证
