@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -22,7 +23,7 @@ func main() {
 	scriptFlag := flag.String("mock-script", "", "force the mock script (greet|read_file|long|boom); default: auto-select per message")
 	flag.Parse()
 
-	logger := log.New(os.Stderr, "happywork ", log.LstdFlags|log.Lmsgprefix)
+	logger := newLogger()
 
 	// Single instance: a second launch just focuses the first window (A4).
 	lock, err := singleinst.Acquire()
@@ -61,9 +62,26 @@ func main() {
 		logger.Printf("focus watcher: %v", err)
 	}
 
-	if err := desktop.Run(desktop.Options{Manager: manager, Logger: logger}); err != nil {
+	if err := desktop.Run(desktop.Options{Manager: manager, Emitter: manager.Emitter(), Logger: logger}); err != nil {
 		logger.Fatalf("desktop: %v", err)
 	}
+}
+
+// newLogger writes to stderr (visible in console builds) and appends to the
+// app log file — under the windowsgui subsystem stderr is detached, so the
+// file is the only way a double-click startup failure leaves a trace.
+func newLogger() *log.Logger {
+	var w io.Writer = os.Stderr
+	if base, err := os.UserConfigDir(); err == nil {
+		dir := filepath.Join(base, "happywork")
+		if err := os.MkdirAll(dir, 0o700); err == nil {
+			if f, err := os.OpenFile(filepath.Join(dir, "happywork.log"),
+				os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err == nil {
+				w = io.MultiWriter(os.Stderr, f)
+			}
+		}
+	}
+	return log.New(w, "happywork ", log.LstdFlags|log.Lmsgprefix)
 }
 
 // openStore opens the SQLite database under the user config dir.

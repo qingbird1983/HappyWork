@@ -42,6 +42,8 @@
 - 任何客体路径先过 `internal/workspace` 规范化管线；UNC/8.3/盘符相对路径直接拒绝 → ADR-0004
 - 权限判定只认工具映射表（Phase 3 接管，Phase 1 是硬编码边界检查）→ ADR-0002/0003
 - stdlib `net` 不支持监听 Windows 命名管道（"pipe"=内存管道）→ P-002
+- windowsgui 二进制的 stderr 不可见：启动日志双写 `%AppData%/happywork/happywork.log`，双击无反应先看这个文件 → P-003
+- vite build 会清空 dist（连同占位 .gitkeep）：vite.config 已设 `emptyOutDir: false` 保 CI embed 可编译；旧哈希产物会累积，Phase 1 量级可接受
 - 删模板/占位文件后全局 grep 悬空引用 → P-001
 - ZCode 参照只读信息结构不搬代码（ADR-0009）；DeepSeek key 只从环境变量读不入库（ADR-0008、standards/06）
 - 前端灰盒推进：信息完整性不降级，视觉零投入 → roadmap Backlog

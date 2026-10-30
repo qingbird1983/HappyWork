@@ -108,6 +108,10 @@ func (m *Manager) ListSessions(ctx context.Context) ([]storage.Session, error) {
 // Store exposes the persistence layer for read-only service methods.
 func (m *Manager) Store() storage.Store { return m.store }
 
+// Emitter returns the event bridge handed in at construction, so the desktop
+// layer can bind it to the real application (desktop.NewEmitter contract).
+func (m *Manager) Emitter() Emitter { return m.emit }
+
 // emitEvent fans an event out to the desktop layer and the events table.
 func (m *Manager) emitEvent(sessionID, name string, payload any) {
 	if m.emit != nil {

@@ -76,7 +76,8 @@ func Run(opts Options) error {
 	}
 	bridge, ok := opts.Emitter.(*lateEmitter)
 	if !ok {
-		return fmt.Errorf("desktop: emitter must come from desktop.NewEmitter")
+		return fmt.Errorf("desktop: Run requires Options.Emitter from NewEmitter (got %T); "+
+			"without it frontend events are silently dropped", opts.Emitter)
 	}
 
 	app := application.New(application.Options{

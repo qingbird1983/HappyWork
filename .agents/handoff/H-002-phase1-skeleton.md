@@ -17,6 +17,7 @@
 - 前端 `prettier`/`eslint`/`tsc --noEmit`/`vite build` 全绿
 - `wails3 build` → `bin/happywork.exe`；`--help` flag 冒烟通过（GUI 未开）
 - `scripts/check-size` 全绿（node_modules 误报已修）
+- **真机启动修复后验证**：控制台版与正式版均存活（进程 + WebView2 创建成功日志）；双击无反应的根因是 `desktop.Options.Emitter` 漏传 + windowsgui 吞日志（P-003），已修
 
 ## 遗留与下一步
 
