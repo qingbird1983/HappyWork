@@ -27,7 +27,8 @@ tmp/
 
 # --- Node / TypeScript（frontend/）---
 node_modules/
-dist/
+frontend/dist/*
+!frontend/dist/.gitkeep
 coverage/
 *.tsbuildinfo
 .npm/
@@ -41,6 +42,8 @@ bin/
 
 # --- Wails 构建产物 ---
 build/bin/
+.task/
+frontend/bindings/
 
 # --- SQLite 运行时文件 ---
 *.db

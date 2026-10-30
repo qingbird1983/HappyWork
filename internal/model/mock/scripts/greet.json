@@ -1,0 +1,9 @@
+{
+  "steps": [
+    {
+      "kind": "say",
+      "text": "你好！我是 HappyWork 的 mock 模型。当前阶段我按剧本回复，用于验证流式显示与会话恢复。你可以试试：包含 read_file 的消息会触发读文件流程，包含 long 的消息会输出长文本，包含 boom 的消息会模拟中途出错。",
+      "chunk_words": 3
+    }
+  ]
+}

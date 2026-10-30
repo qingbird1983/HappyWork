@@ -39,6 +39,7 @@ docs/
 | roadmap/00-roadmap.md | 定稿 | 总路线图、唯一进度看板、backlog 与风险登记簿 |
 | roadmap/phase-1-minimal-skeleton.md | 定稿 | Phase 1 范围合同：最小骨架的做/不做与验收场景 |
 | design/phase-1/design.md | 定稿 | Phase 1 施工设计：模块切片、事件契约、数据模型、mock Provider 剧本、依赖清单 |
+| design/phase-1/report.md | 定稿 | Phase 1 验收报告：A1~A7 逐条证据、偏差与遗留、缺陷修复记录 |
 | standards/01 ~ 09 | 定稿 | 仓库结构 / git 工作流 / 文档 / 代码 / 测试 / 安全 / AI 协作 / 体量 / 规范复查（01/04/05 已按本项目回填） |
 | glossary.md | 草稿 | 术语表（面向非技术读者） |
 | research/01-v2-design-review.md | 定稿 | v2 设计简报评审：4 类发现与外部事实核实，V3 修订依据 |
