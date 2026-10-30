@@ -58,6 +58,20 @@ func (r *recordingEmitter) all(name string) []any {
 	return out
 }
 
+// firstIndex returns the position of the first recorded event matching pred, or
+// -1. Event delivery order is append order, so it can assert causality between
+// paired events (e.g. a paused notice must precede the paused state).
+func (r *recordingEmitter) firstIndex(pred func(name string, payload any) bool) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i, e := range r.events {
+		if pred(e.name, e.payload) {
+			return i
+		}
+	}
+	return -1
+}
+
 // fakeProvider plays a sequence of phase scripts: Stream call N plays phase
 // min(N, len-1). The last phase repeats, which is how the max-turns test
 // builds an endless tool-call loop.

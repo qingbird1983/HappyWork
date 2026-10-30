@@ -3,6 +3,11 @@
 # 凭据纪律：证书/私钥/口令只来自 GitHub Actions Secrets，不进仓库、日志或产物。
 # 缺凭据时正式标签一律失败：绝不降级为"未签名也算发布成功"。
 # dry-run 使用 runner 内临时凭据，产物名带 preview 标记，release job 永远不会拿到它们。
+#
+# 成本与平台策略（所有者 2026-10-31 决定，ADR-0018）：首发平台优先，dry-run 默认**只跑 windows**，
+# macOS/Linux 需在 workflow_dispatch 里显式勾选（正式标签仍然三平台全跑）。
+# 每个 job 都有 timeout-minutes：run 41102612818 里 windows 的"准备签名证书"步骤静默挂住 63 分钟、
+# 白烧约 133 分钟额度（Windows 分钟按 2× 计），原因就是没有超时上界（P-016）。
 
 name: Release
 
@@ -12,9 +17,24 @@ on:
       - "v*"
   # workflow_dispatch 一律是 dry-run：没有标签可比版本，也不会进入 release job。
   workflow_dispatch:
+    inputs:
+      platforms:
+        description: dry-run 要覆盖的平台（首发只看 windows）
+        type: choice
+        required: false
+        default: windows
+        options:
+          - windows
+          - "windows,linux"
+          - "windows,linux,macos"
 
 permissions:
   contents: read
+
+# 同一 ref 上重复触发时取消旧运行，避免排队叠加消耗分钟。
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   GO_VERSION: "1.26"
@@ -25,13 +45,15 @@ jobs:
   # ── 发布门禁：版本一致性 + 全量门禁，失败则不进入任何构建 ──
   prepare:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     outputs:
       version: ${{ steps.plan.outputs.version }}
       label: ${{ steps.plan.outputs.label }}
+      platforms: ${{ steps.plan.outputs.platforms }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: 解析版本与产物标签
+      - name: 解析版本、产物标签与平台范围
         id: plan
         run: |
           set -euo pipefail
@@ -39,6 +61,8 @@ jobs:
             bash scripts/check-version.sh "$GITHUB_REF_NAME"
             echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
             echo "label=release" >> "$GITHUB_OUTPUT"
+            # 正式标签：三平台必须齐全，缺一即失败（不允许"少一个包也发"）。
+            echo "platforms=windows,linux,macos" >> "$GITHUB_OUTPUT"
           else
             # dry-run 没有标签可比，直接采用配置版本；产物标记为预览
             version="$(sed -n '/^info:/,/^[^[:space:]#]/p' build/config.yml |
@@ -46,6 +70,9 @@ jobs:
               head -n1)"
             echo "version=$version" >> "$GITHUB_OUTPUT"
             echo "label=dry-run-preview" >> "$GITHUB_OUTPUT"
+            platforms="${{ github.event.inputs.platforms || 'windows' }}"
+            echo "platforms=$platforms" >> "$GITHUB_OUTPUT"
+            echo "dry-run 平台范围：$platforms"
           fi
 
       - uses: actions/setup-go@v5
@@ -72,7 +99,9 @@ jobs:
   # ── Windows：Authenticode（exe + NSIS 安装包）──
   windows:
     needs: prepare
+    if: contains(needs.prepare.outputs.platforms, 'windows')
     runs-on: windows-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -98,8 +127,11 @@ jobs:
           set -euo pipefail
           "$(go env GOPATH)/bin/wails3" build
 
-      # 正式：从 Secret 还原 PFX；dry-run：生成自签代码签名证书并装入当前用户受信任根，
-      # 这样 signtool /pa 走真实链路校验，而不是跳过验签。
+      # 正式：从 Secret 还原 PFX。dry-run：在内存里造一张一次性自签代码签名证书，导出 PFX，
+      # **不碰任何证书存储**。
+      # 教训（P-016，run 41102612818）：原先用 New-SelfSignedCertificate 写 CurrentUser\My，再把证书
+      # Add 进 CurrentUser\Root 好让 signtool /pa 走真链路——导入受信任根会触发系统确认对话框，
+      # 无人值守 runner 上没人点，job 静默挂死 63 分钟才被系统掐掉，白烧约 133 分钟 Windows 额度。
       - name: 准备签名证书
         id: cert
         shell: pwsh
@@ -114,21 +146,35 @@ jobs:
             if (-not $env:PFX_PASSWORD) { Write-Error "已配置 WINDOWS_PFX_BASE64 但口令为空"; exit 1 }
             [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:PFX_BASE64))
             "password=$env:PFX_PASSWORD" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            "mode=real" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           } elseif ($env:IS_TAG -eq "True") {
             Write-Error "正式标签缺少 WINDOWS_PFX_BASE64/WINDOWS_PFX_PASSWORD：拒绝发布未签名产物"
             exit 1
           } else {
-            $leaf = New-SelfSignedCertificate -Type CodeSigningCert `
-              -Subject "CN=HappyWork Dry-Run" -CertStoreLocation "Cert:\CurrentUser\My" `
-              -NotAfter (Get-Date).AddHours(4)
-            $pw = ConvertTo-SecureString -String "dryrun-only" -Force -AsPlainText
-            Export-PfxCertificate -Cert "Cert:\CurrentUser\My\$($leaf.Thumbprint)" `
-              -FilePath $pfx -Password $pw | Out-Null
-            $store = New-Object System.Security.Cryptography.X509Certificates.X509Store "Root", "CurrentUser"
-            $store.Open("ReadWrite")
-            $store.Add((Get-Item "Cert:\CurrentUser\My\$($leaf.Thumbprint)"))
-            $store.Close()
+            $rsa = [Security.Cryptography.RSA]::Create(2048)
+            $subject = New-Object System.Security.Cryptography.X500DistinguishedName "CN=HappyWork Dry-Run"
+            $req = New-Object System.Security.Cryptography.X509Certificates.CertificateRequest(
+              $subject, $rsa,
+              [Security.Cryptography.HashAlgorithmName]::SHA256,
+              [Security.Cryptography.RSASignaturePadding]::Pkcs1)
+            $req.CertificateExtensions.Add(
+              New-Object Security.Cryptography.X509Certificates.X509BasicConstraintsExtension(
+                $false, $false, 0, $true))
+            $ekus = New-Object System.Security.Cryptography.OidCollection
+            [void]$ekus.Add((New-Object System.Security.Cryptography.Oid "1.3.6.1.5.5.7.3.3"))
+            $req.CertificateExtensions.Add(
+              (New-Object System.Security.Cryptography.X509Certificates.X509EnhancedKeyUsageExtension(
+                $ekus, $false)))
+            $req.CertificateExtensions.Add(
+              (New-Object System.Security.Cryptography.X509Certificates.X509KeyUsageExtension(
+                [Security.Cryptography.X509Certificates.X509KeyUsageFlags]::DigitalSignature, $true)))
+            $cert = $req.CreateSelfSigned(
+              (Get-Date).AddMinutes(-5), (Get-Date).AddHours(4))
+            [IO.File]::WriteAllBytes($pfx,
+              $cert.Export([Security.Cryptography.X509Certificates.X509ContentType]::Pfx, "dryrun-only"))
             "password=dryrun-only" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            "thumbprint=$($cert.Thumbprint)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            "mode=selfsigned" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           }
           "path=$pfx" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
@@ -151,16 +197,44 @@ jobs:
           "$WAILS" tool sign --input "$installer" \
             --certificate "$CERT" --password "$PFX_PASSWORD" --timestamp "$ts"
 
+      # 验签分两条路：
+      #   正式（真实证书）→ signtool verify /pa /all，走系统信任链，失败即 job 失败；
+      #   dry-run（自签）→ 断言"签名存在 + 签名者就是这张临时证书 + 文件哈希与签名一致"。
+      # 自签证书不在信任链里，/pa 必然报未trusted；用 NotTrusted 是**预期结果**，
+      # 而 HashMismatch / NotSigned 才说明流水线真的坏了。绝不因为"没法建链"就跳过验签。
       - name: 验签（失败即 job 失败）
         shell: pwsh
+        env:
+          MODE: ${{ steps.cert.outputs.mode }}
+          EXPECTED_THUMBPRINT: ${{ steps.cert.outputs.thumbprint }}
         run: |
           $ErrorActionPreference = "Stop"
-          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" |
-            Select-Object -Last 1
-          if (-not $signtool) { Write-Error "Windows SDK signtool 未找到"; exit 1 }
-          & $signtool.FullName verify /pa /all "bin\$env:BINARY.exe"
+          $targets = @("bin\$env:BINARY.exe")
           $installer = Get-ChildItem "bin\${env:BINARY}-*-installer.exe" | Select-Object -First 1
-          & $signtool.FullName verify /pa /all $installer.FullName
+          if (-not $installer) { Write-Error "安装包不存在"; exit 1 }
+          $targets += $installer.FullName
+          if ($env:MODE -eq "real") {
+            $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" |
+              Select-Object -Last 1
+            if (-not $signtool) { Write-Error "Windows SDK signtool 未找到"; exit 1 }
+            foreach ($t in $targets) { & $signtool.FullName verify /pa /all $t; if ($LASTEXITCODE -ne 0) { exit 1 } }
+          } else {
+            foreach ($t in $targets) {
+              $sig = Get-AuthenticodeSignature $t
+              Write-Host "$t -> $($sig.Status) / signer=$($sig.SignerCertificate.Thumbprint)"
+              if ($sig.Status -notin @("Valid", "NotTrusted")) {
+                Write-Error "验签失败：$t 的状态是 $($sig.Status)"; exit 1
+              }
+              if (-not $sig.SignerCertificate -or
+                  $sig.SignerCertificate.Thumbprint -ne $env:EXPECTED_THUMBPRINT) {
+                Write-Error "签名者不是本次生成的临时证书：$t"; exit 1
+              }
+              if ($sig.SignerCertificate.EnhancedKeyUsages.Oid.Value -ne "1.3.6.1.5.5.7.3.3") {
+                Write-Error "证书不具备代码签名 EKU：$t"; exit 1
+              }
+            }
+            Write-Host "dry-run 验签通过：签名存在、签名者匹配、文件哈希一致（自签证书不参与系统信任链）"
+          }
 
       - name: 清理证书
         if: always()
@@ -179,7 +253,9 @@ jobs:
   # ── macOS：Developer ID 签名 + 公证 + DMG ──
   macos:
     needs: prepare
+    if: contains(needs.prepare.outputs.platforms, 'macos')
     runs-on: macos-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -280,7 +356,9 @@ jobs:
   # ── Linux：GPG 包签名（deb/rpm 内嵌签名 + AppImage 附签）──
   linux:
     needs: prepare
+    if: contains(needs.prepare.outputs.platforms, 'linux')
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -434,6 +512,7 @@ jobs:
     needs: [prepare, windows, macos, linux]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
     steps:

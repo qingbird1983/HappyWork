@@ -1,19 +1,73 @@
-# CI —— 门禁流水线（Go + 前端 TS + 三平台构建；命令与 docs/standards/04 §1、05 §1 保持一致）
-# 门禁组合：gofmt / golangci-lint / go test / 前端 lint+typecheck / check-size（体量哨兵）。
-# Phase 1 验收 A1（一票否决）：windows/macos/linux 三平台 wails3 build 矩阵。
+# CI —— 按需门禁流水线（Go + 前端 TS + 平台构建；命令与 docs/standards/04 §1、05 §1 保持一致）
+# 触发策略（所有者 2026-10-31 决定，ADR-0018）：
+#   日常验收以**本地门禁**为准——开发机就是 Windows，`scripts/gate.ps1` 跑同一套命令；
+#   远端 CI **不再每轮推送触发**（Actions 分钟是配额资源：Linux 1× / Windows 2× / macOS 10×），
+#   只在里程碑手动 `workflow_dispatch`，或 PR 指向 main 时跑一次。
+# 平台矩阵：首发平台优先。默认只构建 windows；macOS/Linux 通过 inputs 显式加入。
+# 每个 job 都有 timeout-minutes：卡住的步骤不再悄悄吃掉一小时（run 41102612818 的教训，P-016）。
 # Linux 依赖：Wails v3.0.0 默认后端 = GTK4 + WebKitGTK 6.0（pkg-config: gtk4 webkitgtk-6.0）。
 
 name: CI
 
 on:
-  push:
-    branches: [main, "feat/**"]
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: 要构建的平台（首发只看 windows）
+        type: choice
+        required: false
+        default: windows
+        options:
+          - windows
+          - "windows,linux"
+          - "windows,linux,macos"
   pull_request:
     branches: [main]
 
+# 同一分支/PR 上再次触发时取消旧运行，避免排队叠加消耗分钟。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.26"
+  WAILS_CLI_VERSION: "v3.0.0"
+
 jobs:
-  check:
+  # 把 "windows,linux" 这样的输入变成矩阵用的 JSON 数组。
+  plan:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.os.outputs.matrix }}
+    steps:
+      - id: os
+        env:
+          # PR 事件没有 inputs：只构建首发平台。
+          REQUESTED: ${{ github.event.inputs.platforms || 'windows' }}
+        run: |
+          IFS=',' read -ra parts <<< "$REQUESTED"
+          json="["
+          for raw in "${parts[@]}"; do
+            p="$(echo "$raw" | tr -d '[:space:]')"
+            case "$p" in
+              windows) json="$json\"windows-latest\"," ;;
+              linux) json="$json\"ubuntu-latest\"," ;;
+              macos) json="$json\"macos-latest\"," ;;
+              *) echo "unknown platform: $p" >&2; exit 2 ;;
+            esac
+          done
+          json="${json%,}]"
+          echo "matrix=$json" >> "$GITHUB_OUTPUT"
+          echo "build matrix = $json"
+
+  check:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -28,46 +82,27 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev
 
-      # ── Go 门禁 ──────────────────────────────────────────
-      - name: fmt（格式化检查）
-        run: |
-          if [ -f go.mod ]; then
-            test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
-          else
-            echo "skip: go.mod not present (pre-code phase)"
-          fi
+      # ── 与本地同源：scripts/gate.sh 就是开发者本机跑的那一条命令 ──
+      # lint 单独用 action（带缓存），所以 gate 传 --skip-lint；其余 fmt/build/vet/test/
+      # 前端四门/渲染安全/体量哨兵全部由脚本统一负责，避免本地与 CI 各写一份而漂移。
       - name: lint（golangci-lint，standards/01 硬门槛）
         if: hashFiles('go.mod') != ''
         uses: golangci/golangci-lint-action@v8
         with:
           version: latest
-      - name: test
-        if: hashFiles('go.mod') != ''
-        run: go test ./...
 
-      # ── 前端门禁（ADR-0007）─────────────────────────────
-      - name: frontend lint & typecheck（React + TS）
-        if: hashFiles('frontend/package.json') != ''
-        run: cd frontend && npm ci && npm run lint && npm run typecheck && npm run format:check && npm run test:unit
+      - name: gate（同源门禁）
+        run: bash scripts/gate.sh --skip-lint
 
-      # ── 渲染安全门禁（A6）───────────────────────────────
-      - name: check-render-safety
-        run: bash scripts/check-render-safety.sh
-
-      # ── 体量哨兵 ────────────────────────────────────────
-      - name: check-size
-        run: bash scripts/check-size
-
-  # A1 三平台构建（roadmap phase-1 §5）。
+  # 平台构建（roadmap phase-1 A1）。首发平台优先：默认矩阵只有 windows。
   build:
+    needs: plan
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: windows-latest
-          - os: macos-latest
-          - os: ubuntu-latest
+        os: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -82,7 +117,7 @@ jobs:
           sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev
 
       - name: 安装 wails3 CLI（钉 v3.0.0，ADR-0001）
-        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@${{ env.WAILS_CLI_VERSION }}
 
       # shell: bash——Windows 默认 pwsh 会把 $(...) 当 PowerShell 子表达式解析。
       - name: wails3 build
