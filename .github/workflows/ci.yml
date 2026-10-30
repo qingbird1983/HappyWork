@@ -48,7 +48,11 @@ jobs:
       # ── 前端门禁（ADR-0007）─────────────────────────────
       - name: frontend lint & typecheck（React + TS）
         if: hashFiles('frontend/package.json') != ''
-        run: cd frontend && npm ci && npm run lint && npm run typecheck
+        run: cd frontend && npm ci && npm run lint && npm run typecheck && npm run format:check && npm run test:unit
+
+      # ── 渲染安全门禁（A6）───────────────────────────────
+      - name: check-render-safety
+        run: bash scripts/check-render-safety.sh
 
       # ── 体量哨兵 ────────────────────────────────────────
       - name: check-size

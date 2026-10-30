@@ -21,6 +21,8 @@ type Options struct {
 	// Run; it starts forwarding as soon as the app exists.
 	Emitter agent.Emitter
 	Logger  *log.Logger
+	// AppInfo is surfaced to the UI via SessionService.AppInfo.
+	AppInfo AppInfo
 }
 
 // lateEmitter forwards events to the Wails app once Run has created it;
@@ -84,7 +86,7 @@ func Run(opts Options) error {
 		Name:        "HappyWork",
 		Description: "本地优先、权限受控的桌面 AI Agent",
 		Services: []application.Service{
-			application.NewService(&SessionService{mgr: opts.Manager}),
+			application.NewService(&SessionService{mgr: opts.Manager, info: opts.AppInfo}),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(frontend.Dist()),

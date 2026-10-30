@@ -12,14 +12,19 @@ import (
 	"github.com/happywork/happywork/internal/model"
 )
 
-// Meta describes a tool for the registry and (later) the permission mapping
-// table. Reversible/RetrySafe follow architecture/04 ToolMeta semantics.
+// Meta describes a tool for the registry and the permission mapping table.
+// Reversible/RetrySafe follow architecture/04 ToolMeta semantics; Action,
+// Source and Trust feed the Phase 2 decision table (design.md §6.2).
 type Meta struct {
 	Name string
 	Ref  string // e.g. builtin://read_file
 	// Description and Parameters feed the provider's tools entry.
 	Description string
 	Parameters  json.RawMessage // JSON schema for the arguments object
+	Action      string          // read | write | execute | delete | network | unknown
+	Source      string          // builtin | mcp:<server>
+	Trust       string          // trusted | untrusted
+	Destructive bool            // MCP config marked it destructive (block level)
 	Reversible  bool
 	RetrySafe   bool
 }
@@ -31,9 +36,12 @@ type Tool interface {
 	Exec(ctx context.Context, args json.RawMessage) (any, error)
 }
 
-// Registry is the set of tools available to sessions.
+// Registry is the set of tools available to sessions. Built-in tools are
+// static; external tools (MCP) are a live snapshot read on every call, so a
+// server restart is reflected without rebuilding sessions.
 type Registry struct {
-	byName map[string]Tool
+	byName   map[string]Tool
+	external func() []Tool
 }
 
 // NewRegistry returns an empty registry.
@@ -50,23 +58,44 @@ func (r *Registry) Register(t Tool) {
 	r.byName[m.Name] = t
 }
 
-// Get returns the tool registered under name.
+// SetExternal installs (or clears, with nil) the external tool snapshot
+// provider. It must be safe for concurrent calls.
+func (r *Registry) SetExternal(fn func() []Tool) { r.external = fn }
+
+// Get returns the tool registered under name, consulting built-ins first.
 func (r *Registry) Get(name string) (Tool, bool) {
-	t, ok := r.byName[name]
-	return t, ok
+	if t, ok := r.byName[name]; ok {
+		return t, true
+	}
+	for _, t := range r.externalTools() {
+		if t.Meta().Name == name {
+			return t, true
+		}
+	}
+	return nil, false
 }
 
 // Specs renders the registry for the provider tools parameter (sorted by name
 // for deterministic history assembly).
 func (r *Registry) Specs() []model.ToolSpec {
-	names := make([]string, 0, len(r.byName))
-	for n := range r.byName {
+	all := make(map[string]Tool, len(r.byName))
+	for n, t := range r.byName {
+		all[n] = t
+	}
+	for _, t := range r.externalTools() {
+		m := t.Meta()
+		if _, exists := all[m.Name]; !exists {
+			all[m.Name] = t
+		}
+	}
+	names := make([]string, 0, len(all))
+	for n := range all {
 		names = append(names, n)
 	}
 	sort.Strings(names)
 	out := make([]model.ToolSpec, 0, len(names))
 	for _, n := range names {
-		m := r.byName[n].Meta()
+		m := all[n].Meta()
 		out = append(out, model.ToolSpec{
 			Name:        m.Name,
 			Description: m.Description,
@@ -74,4 +103,11 @@ func (r *Registry) Specs() []model.ToolSpec {
 		})
 	}
 	return out
+}
+
+func (r *Registry) externalTools() []Tool {
+	if r.external == nil {
+		return nil
+	}
+	return r.external()
 }

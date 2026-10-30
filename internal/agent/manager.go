@@ -5,9 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/happywork/happywork/internal/model"
+	"github.com/happywork/happywork/internal/permission"
 	"github.com/happywork/happywork/internal/storage"
 	"github.com/happywork/happywork/internal/tool"
 	"github.com/happywork/happywork/internal/workspace"
@@ -21,12 +24,28 @@ type Emitter interface {
 // ErrBusy is returned by Send when the session already has a run in flight.
 var ErrBusy = errors.New("agent: session is busy")
 
+// Options carries app-level paths and tunables the session layer needs.
+type Options struct {
+	// DataDir is the per-user app data directory (attachments, backups,
+	// MCP working dirs). Tests pass a temp dir.
+	DataDir string
+	// ModelName labels usage/cost events and cost estimation. Default "mock".
+	ModelName string
+	// ExternalTools is the live MCP snapshot (tool.Registry.SetExternal).
+	ExternalTools func() []tool.Tool
+}
+
 // Manager creates sessions and routes commands to them. One Manager per app.
 type Manager struct {
-	store storage.Store
-	prov  model.Provider
-	emit  Emitter
-	log   *log.Logger
+	store           storage.Store
+	prov            model.Provider
+	emit            Emitter
+	log             *log.Logger
+	opts            Options
+	gate            permission.Gate
+	budget          BudgetConfig
+	clock           Clock
+	approvalTimeout time.Duration
 
 	mu       sync.Mutex
 	sessions map[string]*Session
@@ -34,17 +53,51 @@ type Manager struct {
 
 // NewManager wires the dependencies. emit may be nil in tests (events are
 // still persisted via the store).
-func NewManager(store storage.Store, prov model.Provider, emit Emitter, lg *log.Logger) *Manager {
+func NewManager(store storage.Store, prov model.Provider, emit Emitter, lg *log.Logger, opts Options) *Manager {
 	if lg == nil {
 		lg = log.Default()
 	}
 	return &Manager{
-		store:    store,
-		prov:     prov,
-		emit:     emit,
-		log:      lg,
-		sessions: map[string]*Session{},
+		store:           store,
+		prov:            prov,
+		emit:            emit,
+		log:             lg,
+		opts:            opts,
+		budget:          DefaultBudget(),
+		clock:           realClock{},
+		approvalTimeout: defaultApprovalTimeout,
+		sessions:        map[string]*Session{},
 	}
+}
+
+func (m *Manager) modelName() string {
+	if m.opts.ModelName != "" {
+		return m.opts.ModelName
+	}
+	return "mock"
+}
+
+// newRegistry builds the per-session tool set bound to the canonical root.
+// Every filesystem tool is bound to this session's root (ADR-0004); writes and
+// oversized results go under the app data dir.
+func (m *Manager) newRegistry(root workspace.Root, sessionID string) *tool.Registry {
+	reg := tool.NewRegistry()
+	reg.Register(tool.NewReadFile(root))
+	reg.Register(tool.NewListDir(root))
+	reg.Register(tool.NewWriteFile(root, m.dataPath("backups"), sessionID))
+	if m.opts.ExternalTools != nil {
+		reg.SetExternal(m.opts.ExternalTools)
+	}
+	return reg
+}
+
+// dataPath joins a subdirectory under the app data dir.
+func (m *Manager) dataPath(elem ...string) string {
+	if m.opts.DataDir == "" {
+		return ""
+	}
+	parts := append([]string{m.opts.DataDir}, elem...)
+	return filepath.Join(parts...)
 }
 
 // CreateSession validates the workspace root, persists the session and keeps
@@ -58,6 +111,7 @@ func (m *Manager) CreateSession(ctx context.Context, workspaceRoot string) (stor
 		ID:            storage.NewID(),
 		Title:         "新会话",
 		WorkspaceRoot: root.String(),
+		ModelID:       m.modelName(),
 		State:         StateIdle,
 	}
 	if err := m.store.CreateSession(ctx, &sess); err != nil {
@@ -65,9 +119,7 @@ func (m *Manager) CreateSession(ctx context.Context, workspaceRoot string) (stor
 	}
 	// The tool registry is per session: every filesystem tool is bound to
 	// this session's canonical workspace root (ADR-0004).
-	reg := tool.NewRegistry()
-	reg.Register(tool.NewReadFile(root, 0))
-	s := &Session{mgr: m, info: sess, tools: reg}
+	s := newSession(m, sess, root, m.newRegistry(root, sess.ID))
 	m.mu.Lock()
 	m.sessions[sess.ID] = s
 	m.mu.Unlock()
@@ -91,9 +143,8 @@ func (m *Manager) GetSession(ctx context.Context, id string) (*Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("agent: rehydrate workspace: %w", err)
 	}
-	reg := tool.NewRegistry()
-	reg.Register(tool.NewReadFile(root, 0))
-	s = &Session{mgr: m, info: info, tools: reg}
+	reg := m.newRegistry(root, info.ID)
+	s = newSession(m, info, root, reg)
 	m.mu.Lock()
 	m.sessions[id] = s
 	m.mu.Unlock()
