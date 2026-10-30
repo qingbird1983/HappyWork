@@ -43,7 +43,7 @@
 | 前端 | `npm run lint` / `typecheck` / `format:check` / `test:unit` / `build` | 全绿；21 用例通过；产物 `dist/assets/index-*.js` 270.31 kB |
 | 版本门禁 | `bash scripts/check-version.sh v0.0.1` | 通过；`v9.9.9` 与 `phase-4.end` 分别按预期失败（退出码 1 与 2） |
 | 桌面构建 | `wails3 build`（Windows 本机） | 通过，产物 `bin/happywork.exe`；三平台 `wails3 build` 由 CI 矩阵覆盖 |
-| 远端 CI | `ci.yml` run `41094526014`（分支 `feat/phase4-audit-rollback-signing`） | **首跑 `check` 失败**：`TestPhase4ExportAndVerifyChain` 在 ubuntu runner 上检出审计导出含工作区绝对路径（见 §4.8）；`build (windows/macos/ubuntu)` 三个 job 通过。修复后待复跑 |
+| 远端 CI | `ci.yml` run `41094526014`、`41096410911`（分支 `feat/phase4-audit-rollback-signing`） | 两次首跑都只红在 `check`，三平台 `build` job 均通过。第一次：审计导出含工作区绝对路径（§4.8，P-013）；第二次：`AppendAudit`/备份写入在并发下报 `database is locked`（§4.9，P-014）。两处都已修复并补回归测试，待第三次复跑确认 |
 
 ## 4. 实现期间的发现与处置
 
@@ -55,6 +55,8 @@
 6. **GPG 口令卫生**：口令写入 `0600` 临时文件后用 `--passphrase-file` 传给 `gpg`；`wails3 tool sign --pgp-password` 只能收字符串，故从该文件读出后传入，不在任何 `echo` 中出现。已知限制：Wails 内部把该口令作为 `dpkg-sig --gpg-options` 参数传入，会短暂出现在子进程命令行中（ephemeral runner 上可接受，上游行为，不掩盖）。
 7. **审批链路拆分**：`askApproval` 从 `exec.go` 移到 `approval.go` 以守住 600 行硬门槛，无行为变更；审计写入改用 `auditApproval`/`auditPermissionRule` helper，消掉重复构造。
 8. **首跑 CI 抓到审计证据泄漏工作区绝对路径（仅 Linux 复现）**：`tool_call`/`approval`/`permission_rule` 三类记录把 `matchKey` 原样写进 `detail`，而 `permission.WriteMatchKey` 里含**绝对父目录**；导出 JSONL 后用户的目录结构随证据外流，违反 D2。本地之所以全绿有两层原因——Windows 上 matchKey 被 `strings.ToLower` 处理过，而测试用 `strings.Contains(jsonl, root.String())` 做**字节精确**比较；即便大小写对齐，路径还躺在 JSON 字符串字段里被多一层反斜杠转义。处置分两步：先把测试改成"去掉分隔符 + 忽略大小写"的比较，让它在本机也红（复现测试先于修复，standards/05 §1）；再从源头修——新增 `Session.auditKey/auditPath`，写进审计的目录一律工作区相对（根内为 `.` 或 `src/cmd`，根外为 `<outside>`），MCP 等无路径键原样透传，数据库里用于匹配的 `permission_rules.match_key` 保持绝对（证据链与匹配键分离）。修复后 `TestPhase4AuditKeyKeepsEvidenceWorkspaceRelative` 固化平台差异。
+
+9. **第二次 CI 失败暴露 SQLite 连接层缺陷（同样只在远端复现）**：`check` job 报 `database is locked (517)` 与 `rollback: mark undo: database is locked (5)`。根因是三层叠加——① `sql.DB` 池未设上限，而 SQLite 的 `busy_timeout/WAL/foreign_keys` 是**按连接**生效的，pragma 只落在第一条连接上；② `AppendAudit` 的延迟事务先读链头再写，属于读→写升级，遇到别的连接已提交会立刻返回 `SQLITE_BUSY_SNAPSHOT`(517)，`busy_timeout` 不重试；③ `AppendMessage` 的"先查 `MAX(seq)` 再插入"和备份版本分配不在同一事务，交错时撞 `UNIQUE(session_id, seq)`。处置：`SetMaxOpenConns(1)`（单用户桌面库，串行比 WAL 并发更有价值，注释已写取舍），新增 `internal/storage/sqlite_write.go` 用 `writeTx` 把序号/版本分配并入插入事务，并补 `sqlite_contention_test.go`（4 写者 × 4 读者 × 25 轮）——修前本机三条症状全部复现，修后 `-count=3` 稳定绿。教训见 P-014；这也说明 P-013 的"本地全绿≠跨平台全绿"同样适用于并发路径。
 
 ## 5. 遗留与后续
 

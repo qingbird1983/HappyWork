@@ -20,7 +20,7 @@
 |---|---|---|
 | 审计链开关 | 默认开启，无关闭开关 | ADR-0015；可关闭的审计无意义 |
 | 链算法 | SHA-256 over RFC 8785 JCS；`prev_hash` + 记录规范字段 | 复用 `internal/jcs`，避免编码歧义 |
-| 追加并发 | 单进程互斥 + SQLite 事务；链头 `audit_chain` 同事务更新 | 单实例锁 + 单写者 |
+| 追加并发 | 连接池上限 1（SQLite pragma 按连接生效）+ 单进程互斥 + 事务；链头 `audit_chain` 同事务读、同事务写 | 单实例锁；跨连接的读→写升级会立刻 `SQLITE_BUSY_SNAPSHOT`，busy_timeout 不重试（P-014） |
 | 防改删 | `BEFORE UPDATE/DELETE` 触发器 `RAISE(ABORT)`；插入校验前链头 | 阻止误改与 naive 插入 |
 | 遗留行 | Phase 4 前无 hash 的行只允许出现在首个密封行之前；之后出现空 hash 视为破损 | 不伪造"历史已密封" |
 | 威胁模型 | 防误改/局部篡改；不防拥有完整 DB 写权限的攻击者重写整链；无外部锚定 | ADR-0015 |

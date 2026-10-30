@@ -35,6 +35,19 @@ func Open(path string) (Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("storage: open %s: %w", path, err)
 	}
+	// One connection on purpose. SQLite pragmas are per connection, so an
+	// unbounded pool silently applied WAL/busy_timeout/foreign_keys only to the
+	// connection that happened to run them, and it let two goroutines open
+	// transactions on the same file: the audit append reads its chain head
+	// before writing, and that read->write upgrade fails with
+	// SQLITE_BUSY_SNAPSHOT, which busy_timeout cannot retry. A single-user
+	// desktop store is better served by serializing access than by WAL
+	// read/write concurrency; the session actor and the panels all do short
+	// queries. Every read-modify-write sequence still needs a transaction (see
+	// sqlite_write.go), because one connection does not make two separate calls
+	// atomic.
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	// WAL + busy timeout: single writer with short concurrent reads.
 	for _, pragma := range []string{
 		"PRAGMA busy_timeout = 5000",
@@ -141,11 +154,6 @@ func (s *sqliteStore) GetSession(ctx context.Context, id string) (Session, error
 	return sess, err
 }
 
-func (s *sqliteStore) touch(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE sessions SET updated_at = ? WHERE id = ?`, Now(), id)
-	return err
-}
-
 func (s *sqliteStore) UpdateSessionState(ctx context.Context, id, state string) error {
 	if _, err := s.db.ExecContext(ctx, `UPDATE sessions SET state = ?, updated_at = ? WHERE id = ?`, state, Now(), id); err != nil {
 		return err
@@ -158,41 +166,6 @@ func (s *sqliteStore) UpdateSessionTitle(ctx context.Context, id, title string) 
 		return err
 	}
 	return nil
-}
-
-func (s *sqliteStore) NextSeq(ctx context.Context, sessionID string) (int64, error) {
-	var seq sql.NullInt64
-	err := s.db.QueryRowContext(ctx,
-		`SELECT MAX(seq) FROM messages WHERE session_id = ?`, sessionID).Scan(&seq)
-	if err != nil {
-		return 0, err
-	}
-	return seq.Int64 + 1, nil
-}
-
-func (s *sqliteStore) AppendMessage(ctx context.Context, m *Message) error {
-	if m.ID == "" {
-		m.ID = NewID()
-	}
-	if m.CreatedAt == "" {
-		m.CreatedAt = Now()
-	}
-	if m.Trust == "" {
-		m.Trust = TrustTrusted
-	}
-	seq, err := s.NextSeq(ctx, m.SessionID)
-	if err != nil {
-		return err
-	}
-	m.Seq = seq
-	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO messages (id, session_id, seq, role, content, tool_call_id, tool_name, tool_calls_json, turn_id, trust, created_at)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-		m.ID, m.SessionID, m.Seq, m.Role, m.Content, m.ToolCallID, m.ToolName, m.ToolCallsJSON, m.TurnID, m.Trust, m.CreatedAt)
-	if err != nil {
-		return err
-	}
-	return s.touch(ctx, m.SessionID)
 }
 
 func (s *sqliteStore) Transcript(ctx context.Context, sessionID string) ([]Message, error) {
@@ -451,28 +424,6 @@ func (s *sqliteStore) VerifyAudit(ctx context.Context) (audit.VerifyResult, erro
 		return audit.VerifyResult{}, fmt.Errorf("storage: read audit head: %w", err)
 	}
 	return verifier.Finish(chainID, chainHash), nil
-}
-
-func (s *sqliteStore) CreateFileBackup(ctx context.Context, b *rollback.Backup) error {
-	if b.ID == "" {
-		b.ID = NewID()
-	}
-	if b.CreatedAt == "" {
-		b.CreatedAt = Now()
-	}
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO file_backups
-		 (id, session_id, turn_id, rel_path, kind, reason, version, mode, size,
-		  backup_rel, backup_sha256, written_sha256, discarded_rel, restore_of,
-		  created_at, verified_at, restored_at)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		b.ID, b.SessionID, b.TurnID, b.RelPath, b.Kind, b.Reason, b.Version,
-		int64(b.Mode), b.Size, b.BackupRel, b.BackupSHA256, b.WrittenSHA256,
-		b.DiscardedRel, b.RestoreOf, b.CreatedAt, b.VerifiedAt, b.RestoredAt)
-	if err != nil {
-		return fmt.Errorf("storage: create file backup: %w", err)
-	}
-	return nil
 }
 
 func (s *sqliteStore) UpdateFileBackupWritten(ctx context.Context, id, writtenSHA, verifiedAt string) error {

@@ -19,12 +19,13 @@
 - 发布流水线：`v*` 标签三平台签名/验签 + `release` job 汇总校验和；`workflow_dispatch` 一律 dry-run；缺凭据的正式标签失败。
 - 顺带修复：Wails 构建资产仍是 init 模板值/旧版本（已重生入库并扩展版本门禁）、`exec.go` 超 600 行（拆出 `approval.go`）、测试脚手架 `fakeProvider.calls` 数据竞争（`-race` 现全绿）。
 - 推送后 CI 首跑（run `41094526014`）：三平台构建 job 全绿，`check` 抓到审计证据含工作区绝对路径（只在 Linux 复现）——源头改为工作区相对 + 测试归一化比较，先红后绿（P-013）。
+- CI 复跑（run `41096410911`）仍红在 `check`：`database is locked (517/5)`。根因是 SQLite pragma 按连接生效而池子无上限，加上"消息序号 / 备份版本号"跨调用取最大值。已把连接池固定为 1、序号与版本分配并入插入事务，新增 4 写者 × 4 读者的并发回归测试（P-014）。
 
 ## 下一步（按优先级，注明阻塞项）
 
 1. **A5 真机验收（所有者）**：隔离 `APPDATA` 下跑 `bin/happywork.exe` —— 写文件审批 → 审计面板链状态/验证/导出 → 备份面板版本列表、恢复（确认二次提示与安全副本）、撤销创建 → 运行中尝试恢复看 `ErrBusy` 提示。
 2. **A6 远端 dry-run（分支已推送）**：手动触发 `Release` workflow（`workflow_dispatch`，一律 dry-run、不发布）；按日志修 `choco install nsis`、`dpkg-sig`/`rpm --checksig` 行为、AppImage 文件名等首次实跑问题。三平台全绿才算 A6 通过。
-3. **A8 收尾**：CI 绿 → 报告定稿 → 签收 → 合并 main → tag `phase-4.end`；看板与 CHANGELOG 收口。**不打 `v*` 标签**（发版另排）。
+3. **A8 收尾**：远端 CI 第三次复跑确认全绿（前两轮分别红在 P-013 路径泄漏、P-014 存储并发，两处都已修 + 回归测试）→ 报告定稿 → 签收 → 合并 main → tag `phase-4.end`；看板与 CHANGELOG 收口。**不打 `v*` 标签**（发版另排）。
 4. **A7 条件项（随首发排期主动延后）**：所有者提供 Windows PFX、Apple Developer ID/公证、Linux GPG 私钥与 Key ID 后配成 GitHub Secrets，补跑正式签名并回填证书主体/指纹证据；届时 macOS/Linux 只验收"可构建 + 可签名 + 可验签"。
 5. 可选真机补录（Phase 3 遗留）：持久短语与 secret-scan 的 GUI 提交（宿主安全分类器限制，集成测试已覆盖）。
 6. UI 细设计与打磨（含审计/备份面板灰盒样式）按所有者决定排在发版之前，Phase 4 不强行收尾。
@@ -41,6 +42,7 @@
 
 - 审计放行类事件 fail-closed：写不进审计就不放行；拒绝类只告警。不得伪造"历史已密封"。
 - 写进审计的路径/匹配键一律工作区相对（`.` / `src/cmd` / `<outside>`），绝对键只留 `permission_rules` 表；路径不变量的测试要忽略大小写与分隔符，否则又变成"只在 Linux 有效"的检查（P-013）。
+- SQLite 纪律：连接池固定 1 条（pragma 按连接生效，多连接会让 busy_timeout/WAL/外键只对第一条有效）；`SQLITE_BUSY_SNAPSHOT`(517) 是读→写升级死锁，加重试无用，必须串行化或用 IMMEDIATE 事务；"查最大值再插入"（消息 seq、备份 version、审计链头）必须在同一事务里，单连接不等于事务（P-014）。
 - 备份恢复前先备份当前状态；新建撤销移入 `discarded/`，不直接删除；路径每次重规范化；运行态一律拒绝恢复/撤销。
 - 无真实凭据不得发布未签名产物；dry-run 产物只能是 preview，且 `release` job 只取 `*-release` 产物。
 - `wails3 tool sign` 的 Linux `--pgp-key` 是**密钥 ID**（内部走 `dpkg-sig -k` / `rpmsign`），不是私钥文件路径；`rpm --checksig` 需先导入公钥，断言要写 `digests signatures OK`。

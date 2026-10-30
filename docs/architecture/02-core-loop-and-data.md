@@ -133,7 +133,7 @@ func (r *Runner) detectLoop(s *Session, call ToolCall) error {
 | `events` | session_id, turn_id, name, payload_json, trace_id | 审计用，不与 UI 事件混用 |
 | `kv` | key, value_json | 轻量状态、persistent 审批规则 |
 
-SQLite 纪律：单写者连接池、显式事务、幂等迁移；WAL 自动 checkpoint 默认 1000 页（按实测调，高频写入有间歇卡顿风险）；备份用在线接口，不复制打开中的文件。审计追加由进程内互斥 + 单写者事务串行化，避免链头竞态。
+SQLite 纪律：**连接池上限固定为 1**（`SetMaxOpenConns/SetMaxIdleConns`）——pragma 是按连接生效的，多连接会让 `busy_timeout/WAL/foreign_keys` 只覆盖第一条连接，并让"先读后写"的事务升级成 `SQLITE_BUSY_SNAPSHOT`；序号/版本分配（消息 `seq`、备份 `version`、审计链头）必须在同一事务内完成读+插入，单连接不等于事务（见 `internal/storage/sqlite_write.go`）。WAL 自动 checkpoint 默认 1000 页（按实测调，高频写入有间歇卡顿风险）；备份用在线接口，不复制打开中的文件。并发面由 `sqlite_contention_test.go` 守住（写者 × 读者交错，断言无 BUSY、无唯一约束冲突）。审计追加另有进程内互斥，避免链头竞态。
 
 **迁移与恢复**：迁移幂等可重试（0001→0004）；启动校验 `schema_version`，不匹配拒绝启动并提示升级路径；旧库的审计行没有哈希，验证器计为"遗留未密封"段，首个新行以空前驱开链。会话恢复依赖 transcript 重放。
 
