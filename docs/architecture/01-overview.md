@@ -131,4 +131,4 @@ migrations/                    # SQL 迁移
 | 审批后参数漂移 | TOCTOU 管道 + JCS hash 锁定 | 04 |
 | SQLite 损坏 / 双实例 | 单写者、WAL、在线备份、单实例锁 | 02、04 |
 
-待决：首个真实 Provider 选型（Phase 2）；ML 分类器作为决策维度实现方式（Backlog）。前端框架已定 React + TS（[ADR-0007](../adr/ADR-0007-frontend-react.md)）。
+待决：ML 分类器作为决策维度实现方式（Backlog）。已定：前端 React + TS（[ADR-0007](../adr/ADR-0007-frontend-react.md)）；真机测试 Provider DeepSeek（[ADR-0008](../adr/ADR-0008-deepseek-test-provider.md)，Phase 2 接入）；UI 信息结构参照 ZCode（[ADR-0009](../adr/ADR-0009-zcode-ui-reference.md)）。

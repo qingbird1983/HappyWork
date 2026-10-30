@@ -41,6 +41,8 @@ docs/
 | standards/01 ~ 09 | 定稿 | 仓库结构 / git 工作流 / 文档 / 代码 / 测试 / 安全 / AI 协作 / 体量 / 规范复查（01/04/05 已按本项目回填） |
 | glossary.md | 草稿 | 术语表（面向非技术读者） |
 | research/01-v2-design-review.md | 定稿 | v2 设计简报评审：4 类发现与外部事实核实，V3 修订依据 |
+| research/02-deepseek-api.md | 定稿 | DeepSeek API 对接事实：端点/模型/function calling/流式 usage/价格 |
+| research/03-zcode-ui-reference.md | 定稿 | ZCode UI 信息结构观察：审批弹窗三要素、工具块、主界面分区 |
 | adr/ADR-0001-adopt-go-wails3.md | 定稿 | 技术栈选型 Go + Wails v3，钉版本 + 适配层隔离 |
 | adr/ADR-0002-unified-permission-model.md | 定稿 | 权限模型合并为单一工具映射表，角色降级为预设包 |
 | adr/ADR-0003-dual-fingerprint.md | 定稿 | 审批匹配指纹与执行锁定 hash 分离；canonical JSON 采用 JCS |
@@ -48,6 +50,8 @@ docs/
 | adr/ADR-0005-mvp-security-downgrade.md | 定稿 | MVP 安全降级：备份式回滚、沙箱分期、外部 Hook 延后 |
 | adr/ADR-0006-license-mit.md | 定稿 | 项目许可证采用 MIT |
 | adr/ADR-0007-frontend-react.md | 定稿 | 前端采用 React + TypeScript |
+| adr/ADR-0008-deepseek-test-provider.md | 定稿 | 开发期真机测试 Provider 采用 DeepSeek（key 走环境变量） |
+| adr/ADR-0009-zcode-ui-reference.md | 定稿 | 前端信息结构以 ZCode 为参照物（只读结构不搬代码） |
 | architecture/01-overview.md | 评审中 | 定位与边界、六层架构、包依赖、代码骨架、阶段映射 |
 | architecture/02-core-loop-and-data.md | 评审中 | 会话 Actor、完整状态机、预算、上下文窗口管理、数据模型、崩溃恢复 |
 | architecture/03-permission-and-approval.md | 评审中 | 单一权限模型、四维审批、双指纹、路径规范化管线、工具映射表 |
