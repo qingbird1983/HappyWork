@@ -10,7 +10,9 @@ import type {
   ToolPayload,
 } from "./types";
 
-const SVC = "desktop.SessionService";
+// Wails v3 qualifies bound methods as <full import path>.<Struct>.<Method>
+// (pkg/application/bindings.go fqn) — not the short package name.
+const SVC = "github.com/happywork/happywork/internal/desktop.SessionService";
 
 export const api = {
   listSessions: () => Call.ByName(`${SVC}.ListSessions`) as Promise<Session[]>,

@@ -37,7 +37,7 @@
 - Wails v3 钉 **v3.0.0**（CLI 与库同线）；所有 Wails 调用只在 `internal/desktop/` → ADR-0001
 - **CGO_ENABLED=0 是项目约束**：禁止引入 CGO 依赖（SQLite 用 modernc 纯 Go）→ ADR-0010
 - 构建入口 `wails3 build`（Taskfile 链）；`go build ./cmd/agent` 需先有 `frontend/dist`（embed；CI 里 wails3 build 自带前端步骤）
-- 前端调后端走 `Call.ByName("desktop.SessionService.X")`，方法名集中在 `frontend/src/api.ts`；生成绑定（frontend/bindings/，已 gitignore）暂不使用
+- 前端调后端走 `Call.ByName`，绑定名 = **完整 import path** `.Struct.Method`（非短包名，真机踩过），全部集中在 `frontend/src/api.ts`；生成绑定（frontend/bindings/，已 gitignore）暂不使用
 - mock 剧本选择：上一条是工具结果 → 固定 `tool_result` 剧本，否则按关键词（boom/long/read_file·读取/缺省 greet）——改剧本别破坏这个防死循环分支
 - 任何客体路径先过 `internal/workspace` 规范化管线；UNC/8.3/盘符相对路径直接拒绝 → ADR-0004
 - 权限判定只认工具映射表（Phase 3 接管，Phase 1 是硬编码边界检查）→ ADR-0002/0003

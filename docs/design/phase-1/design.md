@@ -19,7 +19,7 @@
 | 前端栈 | React + TypeScript + Vite；灰盒零视觉投入 | ADR-0007、roadmap Backlog |
 | Go module 路径 | `github.com/happywork/happywork`（仓库未设远端，占位路径，首次发布前不改） | standards/01 |
 | Go 版本线 | go 1.26（wails v3 要求 ≥1.26；本机 1.27） | research/01 |
-| 前端服务绑定方式 | Phase 1 用 `@wailsio/runtime` 的 `Call.ByName` 字符串绑定，跳过代码生成链路；Phase 2 接入 `wails3 generate bindings` 时切换为生成式 | 灰盒期降低工具链复杂度 |
+| 前端服务绑定方式 | Phase 1 用 `@wailsio/runtime` 的 `Call.ByName` 字符串绑定，跳过代码生成链路；Phase 2 接入 `wails3 generate bindings` 时切换为生成式。**绑定名约定（真机验证）**：`<完整 import path>.<Struct>.<Method>`（wails bindings.go fqn），非短包名；名称集中在 `frontend/src/api.ts` | 灰盒期降低工具链复杂度 |
 
 ## 3. 代码结构（Phase 1 实际切片）
 
