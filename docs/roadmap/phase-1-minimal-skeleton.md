@@ -1,6 +1,6 @@
 # Phase 1：最小骨架
 
-- 状态：草稿
+- 状态：定稿（2026-10-30）
 - 日期：2026-10-30
 - 关联：[00-roadmap.md](00-roadmap.md) §1；[ADR-0001](../adr/ADR-0001-adopt-go-wails3.md)；[architecture/01](../architecture/01-overview.md)、[02](../architecture/02-core-loop-and-data.md)
 
@@ -28,9 +28,9 @@
 
 ## 3. 开工前置条件
 
-- [architecture/01](../architecture/01-overview.md)、[02](../architecture/02-core-loop-and-data.md) 转定稿（当前评审中）
-- `docs/design/phase-1/` 施工设计稿定稿（前端框架已定 React + TS，[ADR-0007](../adr/ADR-0007-frontend-react.md)；设计稿含依赖准入登记）
-- 工具链就绪：Go 1.26+、wails3 CLI、三平台构建环境（macOS 公证账号提前验证）
+- [architecture/01](../architecture/01-overview.md)、[02](../architecture/02-core-loop-and-data.md) 转定稿（2026-10-30，所有者放行）
+- `docs/design/phase-1/` 施工设计稿定稿（[design.md](../design/phase-1/design.md)，2026-10-30；前端框架已定 React + TS 见 [ADR-0007](../adr/ADR-0007-frontend-react.md)；依赖准入同步 standards/04 附录 A）
+- 工具链就绪：Go 1.26+（本机 1.27 ✓）、wails3 CLI（2026-10-30 已装，对应 v3.0.0）、三平台构建环境（macOS 公证账号提前验证）
 
 ## 4. 交付物
 

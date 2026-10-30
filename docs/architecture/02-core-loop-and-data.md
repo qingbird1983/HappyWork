@@ -1,6 +1,6 @@
 # 02-核心循环、状态与数据
 
-- 状态：评审中
+- 状态：定稿（2026-10-30，所有者放行开工）
 - 日期：2026-10-30
 - 关联：[01-overview](01-overview.md)；[ADR-0002](../adr/ADR-0002-unified-permission-model.md)；[research/01](../research/01-v2-design-review.md)
 

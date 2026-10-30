@@ -1,6 +1,6 @@
 # 01-总览：定位、架构与边界
 
-- 状态：评审中
+- 状态：定稿（2026-10-30，所有者放行开工）
 - 日期：2026-10-30
 - 关联：[ADR-0001](../adr/ADR-0001-adopt-go-wails3.md) ~ [ADR-0006](../adr/ADR-0006-license-mit.md)；本目录 [02](02-core-loop-and-data.md)、[03](03-permission-and-approval.md)、[04](04-security-and-hooks.md)；[roadmap](../roadmap/00-roadmap.md)
 - 取代：`briefs/`《Go + Wails 3 桌面端 Agent 设计方案 v2》——v3 修订依据见 [research/01](../research/01-v2-design-review.md)

@@ -64,4 +64,9 @@
 |---|---|---|---|---|---|
 | github.com/wailsapp/wails/v3 | v3.0 稳定线（钉 minor） | 桌面壳与 WebView 绑定（[ADR-0001](../adr/ADR-0001-adopt-go-wails3.md)） | 技术栈基石 | Wails 团队（活跃） | Electron/纯 CLI 已在 ADR-0001 否决 |
 | github.com/gofrs/flock | v0.x 主线 | 单实例锁跨平台（Windows LockFileEx / POSIX flock） | 架构 04 §单实例锁指定 | gofrs 社区（活跃） | 自研锁原语：重复造轮子且 Windows 易错 |
-| SQLite 驱动（modernc.org/sqlite 或 mattn/go-sqlite3） | Phase 1 设计稿定 | transcript 持久化 | 架构 02 §数据模型 | — | CGO 与交叉编译取舍，Phase 1 设计时决策登记 |
+| modernc.org/sqlite | v0.x 主线 | transcript 持久化（database/sql 接口） | 免 CGO 保三平台构建（[ADR-0010](../adr/ADR-0010-sqlite-driver.md)） | modernc.org（活跃） | mattn/go-sqlite3：CGO 工具链与 A1 三平台构建冲突（ADR-0010） |
+| react / react-dom | 19.x | 前端 UI（[ADR-0007](../adr/ADR-0007-frontend-react.md)） | 前端栈基石 | Meta 社区（活跃） | Vue/Svelte 已在 ADR-0007 否决 |
+| @wailsio/runtime | 3.0 线 | 前端事件订阅与服务调用 | Wails 前端运行时，与 wails/v3 配套 | Wails 团队（活跃） | 自写 IPC 封装：重复且易与后端漂移 |
+| typescript / vite / @vitejs/plugin-react | 7.x / 8.x / 6.x | 前端开发工具链 | ADR-0007 门禁（tsc）与构建依赖 | 各自社区（活跃） | webpack：配置面大，灰盒期无必要 |
+| eslint + typescript-eslint + eslint-plugin-react-hooks | 10.x / 8.x / 7.x | 前端静态检查 | CI 门禁（standards/01） | 各自社区（活跃） | biome：生态尚浅 |
+| prettier | 3.x | 前端格式化 | CI 门禁 | prettier 社区（活跃） | dprint：小众 |

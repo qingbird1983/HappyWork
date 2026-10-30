@@ -1,6 +1,6 @@
 # 03-权限模型与审批
 
-- 状态：评审中
+- 状态：定稿（2026-10-30，所有者放行开工）
 - 日期：2026-10-30
 - 关联：[01-overview](01-overview.md)；[ADR-0002](../adr/ADR-0002-unified-permission-model.md)、[ADR-0003](../adr/ADR-0003-dual-fingerprint.md)、[ADR-0004](../adr/ADR-0004-path-canonicalization.md)；[04-security-and-hooks](04-security-and-hooks.md) §TOCTOU
 

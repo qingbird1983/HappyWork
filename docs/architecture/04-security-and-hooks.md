@@ -1,6 +1,6 @@
 # 04-安全边界、TOCTOU 管道与扩展
 
-- 状态：评审中
+- 状态：定稿（2026-10-30，所有者放行开工）
 - 日期：2026-10-30
 - 关联：[01-overview](01-overview.md)、[02](02-core-loop-and-data.md)、[03](03-permission-and-approval.md)；[ADR-0003](../adr/ADR-0003-dual-fingerprint.md)、[ADR-0005](../adr/ADR-0005-mvp-security-downgrade.md)；[research/01](../research/01-v2-design-review.md)
 

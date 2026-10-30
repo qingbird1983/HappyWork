@@ -36,8 +36,9 @@ docs/
 
 | 文档 | 状态 | 一句话说明 |
 |---|---|---|
-| roadmap/00-roadmap.md | 评审中 | 总路线图、唯一进度看板、backlog 与风险登记簿 |
-| roadmap/phase-1-minimal-skeleton.md | 草稿 | Phase 1 范围合同：最小骨架的做/不做与验收场景 |
+| roadmap/00-roadmap.md | 定稿 | 总路线图、唯一进度看板、backlog 与风险登记簿 |
+| roadmap/phase-1-minimal-skeleton.md | 定稿 | Phase 1 范围合同：最小骨架的做/不做与验收场景 |
+| design/phase-1/design.md | 定稿 | Phase 1 施工设计：模块切片、事件契约、数据模型、mock Provider 剧本、依赖清单 |
 | standards/01 ~ 09 | 定稿 | 仓库结构 / git 工作流 / 文档 / 代码 / 测试 / 安全 / AI 协作 / 体量 / 规范复查（01/04/05 已按本项目回填） |
 | glossary.md | 草稿 | 术语表（面向非技术读者） |
 | research/01-v2-design-review.md | 定稿 | v2 设计简报评审：4 类发现与外部事实核实，V3 修订依据 |
@@ -52,7 +53,8 @@ docs/
 | adr/ADR-0007-frontend-react.md | 定稿 | 前端采用 React + TypeScript |
 | adr/ADR-0008-deepseek-test-provider.md | 定稿 | 开发期真机测试 Provider 采用 DeepSeek（key 走环境变量） |
 | adr/ADR-0009-zcode-ui-reference.md | 定稿 | 前端信息结构以 ZCode 为参照物（只读结构不搬代码） |
-| architecture/01-overview.md | 评审中 | 定位与边界、六层架构、包依赖、代码骨架、阶段映射 |
-| architecture/02-core-loop-and-data.md | 评审中 | 会话 Actor、完整状态机、预算、上下文窗口管理、数据模型、崩溃恢复 |
-| architecture/03-permission-and-approval.md | 评审中 | 单一权限模型、四维审批、双指纹、路径规范化管线、工具映射表 |
-| architecture/04-security-and-hooks.md | 评审中 | 三层防线、TOCTOU 管道、Hook、渲染安全、沙箱分期、备份回滚、测试基线 |
+| adr/ADR-0010-sqlite-driver.md | 定稿 | SQLite 驱动采用 modernc.org/sqlite（纯 Go 免 CGO，保三平台构建） |
+| architecture/01-overview.md | 定稿 | 定位与边界、六层架构、包依赖、代码骨架、阶段映射 |
+| architecture/02-core-loop-and-data.md | 定稿 | 会话 Actor、完整状态机、预算、上下文窗口管理、数据模型、崩溃恢复 |
+| architecture/03-permission-and-approval.md | 定稿 | 单一权限模型、四维审批、双指纹、路径规范化管线、工具映射表 |
+| architecture/04-security-and-hooks.md | 定稿 | 三层防线、TOCTOU 管道、Hook、渲染安全、沙箱分期、备份回滚、测试基线 |

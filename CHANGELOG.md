@@ -6,6 +6,16 @@
 
 ---
 
+## [0.1.005] - 2026-10-30
+
+### 架构基线转定稿，Phase 1 开工（ADR-0010）
+
+- 所有者放行：architecture/01~04 与 roadmap 转定稿；Phase 1 施工设计稿定稿（docs/design/phase-1/design.md：模块切片、事件契约、数据模型、mock Provider 剧本、依赖清单）。
+- SQLite 驱动选型定为 modernc.org/sqlite（纯 Go 免 CGO，保三平台构建）；前端依赖清单同步登记 standards/04 附录 A。
+- Phase 1 在 feat/phase1-skeleton 分支开工：Wails 壳 + SQLite + mock 模型 + read_file + 单实例锁。
+
+---
+
 ## [0.1.004] - 2026-10-30
 
 ### 真机测试与 UI 参照两项决策落盘（ADR-0008/0009）
