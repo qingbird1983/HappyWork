@@ -25,7 +25,9 @@ Phase 4（不可变审计 + 备份式回滚 + 三平台签名 CI）实现完成�
 
 - P-011 Wails 构建资产停留在 init 模板值且版本落后 → 重生 + 版本门禁扩展到资产。
 - P-012 `wails3 tool sign --pgp-key` 是密钥 ID 不是文件；`rpm --checksig` 要导入公钥并断言 `digests signatures OK`；产物名是小写 `happywork`，Wails 的 `windows:sign:installer` 任务路径与 `project.nsi` 不一致。
+- P-013 审计证据写入工作区绝对路径，本机（Windows）测不出、Linux CI 才红：匹配键被小写化 + JSON 双层转义，字节精确的 `Contains` 断言失效。已改为源头相对化 + 归一化比较。
 - 另修：`internal/agent/exec.go` 超 600 行 → 拆 `approval.go`；测试脚手架 `fakeProvider.calls` 无锁读 → `-race` 全绿。
+- 远端 CI 首跑 `41094526014`：`build (windows/macos/ubuntu)` 三 job 通过，`check` 因 P-013 失败；修复提交后需复跑确认。
 
 ## 快速恢复上下文
 

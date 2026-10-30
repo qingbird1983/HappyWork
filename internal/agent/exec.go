@@ -186,7 +186,7 @@ func (s *Session) execOne(ctx context.Context, call model.ToolCall, turnID int64
 	execHash, hashErr := jcs.Hash([]byte(canonical))
 	if hashErr != nil {
 		s.auditToolBestEffort(ctx, turnID, meta.Name, meta.Ref, audit.DecisionDeny,
-			"invalid I-JSON arguments: "+hashErr.Error(), map[string]any{"matchKey": matchKey})
+			"invalid I-JSON arguments: "+hashErr.Error(), map[string]any{"matchKey": s.auditKey(matchKey)})
 		return s.finishCall(ctx, recordID, result, storage.ToolCallRecord{
 			TurnID: turnID, Name: meta.Name, ToolRef: meta.Ref, MatchKey: matchKey,
 			ArgsJSON: canonical, Decision: "deny", Risk: "deny",
@@ -218,12 +218,12 @@ func (s *Session) execOne(ctx context.Context, call model.ToolCall, turnID int64
 	}
 	s.emitPermission(meta, verdict)
 	auditExtra := map[string]any{
-		"matchKey": matchKey, "execHash": execHash, "trust": s.contentTrust(),
+		"matchKey": s.auditKey(matchKey), "execHash": execHash, "trust": s.contentTrust(),
 		"scope": verdict.Scope, "level": verdict.Level, "quota": verdict.QuotaExceeded,
 	}
 	if verdict.GrantedBy == permission.ScopePersistent {
-		if err := s.auditPermissionRule(ctx, turnID, audit.DecisionHit, matchKey,
-			map[string]any{"toolRef": meta.Ref, "matchKey": matchKey}); err != nil {
+		if err := s.auditPermissionRule(ctx, turnID, audit.DecisionHit, s.auditKey(matchKey),
+			map[string]any{"toolRef": meta.Ref, "matchKey": s.auditKey(matchKey)}); err != nil {
 			s.auditToolBestEffort(ctx, turnID, meta.Name, meta.Ref, audit.DecisionDeny,
 				"audit write failed", auditExtra)
 			return s.finishCall(ctx, recordID, result, storage.ToolCallRecord{
@@ -271,7 +271,7 @@ func (s *Session) execOne(ctx context.Context, call model.ToolCall, turnID int64
 				message = feedback
 			}
 			s.auditToolBestEffort(ctx, turnID, meta.Name, meta.Ref, audit.DecisionDeny, message,
-				map[string]any{"matchKey": matchKey, "execHash": execHash, "scope": "once"})
+				map[string]any{"matchKey": s.auditKey(matchKey), "execHash": execHash, "scope": "once"})
 			return s.finishCall(ctx, recordID, result, storage.ToolCallRecord{
 				TurnID: turnID, Name: meta.Name, ToolRef: meta.Ref, MatchKey: matchKey,
 				ArgsJSON: canonical, Decision: "deny", Risk: verdict.Decision, Reversible: meta.Reversible,

@@ -43,6 +43,7 @@
 | 前端 | `npm run lint` / `typecheck` / `format:check` / `test:unit` / `build` | 全绿；21 用例通过；产物 `dist/assets/index-*.js` 270.31 kB |
 | 版本门禁 | `bash scripts/check-version.sh v0.0.1` | 通过；`v9.9.9` 与 `phase-4.end` 分别按预期失败（退出码 1 与 2） |
 | 桌面构建 | `wails3 build`（Windows 本机） | 通过，产物 `bin/happywork.exe`；三平台 `wails3 build` 由 CI 矩阵覆盖 |
+| 远端 CI | `ci.yml` run `41094526014`（分支 `feat/phase4-audit-rollback-signing`） | **首跑 `check` 失败**：`TestPhase4ExportAndVerifyChain` 在 ubuntu runner 上检出审计导出含工作区绝对路径（见 §4.8）；`build (windows/macos/ubuntu)` 三个 job 通过。修复后待复跑 |
 
 ## 4. 实现期间的发现与处置
 
@@ -53,6 +54,7 @@
 5. **`workflow_dispatch` 的 `dry_run` 输入被去掉**：手动触发没有标签就没有"正式"语义，保留一个不生效的输入只会误导，因此 dispatch 一律 dry-run，`release` job 条件为 `github.event_name == 'push'`，产物名用 `release` / `dry-run-preview` 后缀隔离。
 6. **GPG 口令卫生**：口令写入 `0600` 临时文件后用 `--passphrase-file` 传给 `gpg`；`wails3 tool sign --pgp-password` 只能收字符串，故从该文件读出后传入，不在任何 `echo` 中出现。已知限制：Wails 内部把该口令作为 `dpkg-sig --gpg-options` 参数传入，会短暂出现在子进程命令行中（ephemeral runner 上可接受，上游行为，不掩盖）。
 7. **审批链路拆分**：`askApproval` 从 `exec.go` 移到 `approval.go` 以守住 600 行硬门槛，无行为变更；审计写入改用 `auditApproval`/`auditPermissionRule` helper，消掉重复构造。
+8. **首跑 CI 抓到审计证据泄漏工作区绝对路径（仅 Linux 复现）**：`tool_call`/`approval`/`permission_rule` 三类记录把 `matchKey` 原样写进 `detail`，而 `permission.WriteMatchKey` 里含**绝对父目录**；导出 JSONL 后用户的目录结构随证据外流，违反 D2。本地之所以全绿有两层原因——Windows 上 matchKey 被 `strings.ToLower` 处理过，而测试用 `strings.Contains(jsonl, root.String())` 做**字节精确**比较；即便大小写对齐，路径还躺在 JSON 字符串字段里被多一层反斜杠转义。处置分两步：先把测试改成"去掉分隔符 + 忽略大小写"的比较，让它在本机也红（复现测试先于修复，standards/05 §1）；再从源头修——新增 `Session.auditKey/auditPath`，写进审计的目录一律工作区相对（根内为 `.` 或 `src/cmd`，根外为 `<outside>`），MCP 等无路径键原样透传，数据库里用于匹配的 `permission_rules.match_key` 保持绝对（证据链与匹配键分离）。修复后 `TestPhase4AuditKeyKeepsEvidenceWorkspaceRelative` 固化平台差异。
 
 ## 5. 遗留与后续
 

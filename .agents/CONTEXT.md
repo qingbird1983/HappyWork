@@ -18,6 +18,7 @@
 - 接线与 API：`audit.Record` 统一入口 + trace/turn 贯穿；`write_file` 委托 `rollback.Writer`；桌面新增 6 个方法；前端"审计 / 备份"抽屉（纯文本渲染，CSP 不变）。
 - 发布流水线：`v*` 标签三平台签名/验签 + `release` job 汇总校验和；`workflow_dispatch` 一律 dry-run；缺凭据的正式标签失败。
 - 顺带修复：Wails 构建资产仍是 init 模板值/旧版本（已重生入库并扩展版本门禁）、`exec.go` 超 600 行（拆出 `approval.go`）、测试脚手架 `fakeProvider.calls` 数据竞争（`-race` 现全绿）。
+- 推送后 CI 首跑（run `41094526014`）：三平台构建 job 全绿，`check` 抓到审计证据含工作区绝对路径（只在 Linux 复现）——源头改为工作区相对 + 测试归一化比较，先红后绿（P-013）。
 
 ## 下一步（按优先级，注明阻塞项）
 
@@ -39,6 +40,7 @@
 ## 关键提醒（坑/规范变更/易错点，链接 pitfalls 编号）
 
 - 审计放行类事件 fail-closed：写不进审计就不放行；拒绝类只告警。不得伪造"历史已密封"。
+- 写进审计的路径/匹配键一律工作区相对（`.` / `src/cmd` / `<outside>`），绝对键只留 `permission_rules` 表；路径不变量的测试要忽略大小写与分隔符，否则又变成"只在 Linux 有效"的检查（P-013）。
 - 备份恢复前先备份当前状态；新建撤销移入 `discarded/`，不直接删除；路径每次重规范化；运行态一律拒绝恢复/撤销。
 - 无真实凭据不得发布未签名产物；dry-run 产物只能是 preview，且 `release` job 只取 `*-release` 产物。
 - `wails3 tool sign` 的 Linux `--pgp-key` 是**密钥 ID**（内部走 `dpkg-sig -k` / `rpmsign`），不是私钥文件路径；`rpm --checksig` 需先导入公钥，断言要写 `digests signatures OK`。

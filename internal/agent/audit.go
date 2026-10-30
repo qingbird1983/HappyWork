@@ -3,6 +3,8 @@ package agent
 import (
 	"context"
 	"fmt"
+	"path/filepath"
+	"strings"
 
 	"github.com/happywork/happywork/internal/audit"
 	"github.com/happywork/happywork/internal/rollback"
@@ -53,6 +55,59 @@ func auditDetail(extra map[string]any) string {
 	return detail
 }
 
+// relPath converts an absolute path into its workspace-relative form. Windows
+// match keys are lower-cased by permission.WriteMatchKey, so the prefix test is
+// case-insensitive there.
+func (s *Session) relPath(p string) (string, bool) {
+	if p == "" {
+		return "", false
+	}
+	abs := filepath.FromSlash(p)
+	if !filepath.IsAbs(abs) {
+		return filepath.ToSlash(p), true
+	}
+	root := s.root.String()
+	cmpAbs, cmpRoot := abs, root
+	if filepath.Separator == '\\' {
+		cmpAbs, cmpRoot = strings.ToLower(abs), strings.ToLower(root)
+	}
+	switch {
+	case cmpAbs == cmpRoot:
+		return ".", true
+	case strings.HasPrefix(cmpAbs, cmpRoot+string(filepath.Separator)):
+		return filepath.ToSlash(abs[len(root)+1:]), true
+	default:
+		return "", false
+	}
+}
+
+// auditKey renders a permission match key for evidence. The built-in write key
+// embeds an absolute parent directory, but audit records are exportable, so the
+// directory is rewritten relative to the workspace and anything outside it
+// collapses to a marker (design D2: metadata only, no user directory layout).
+func (s *Session) auditKey(key string) string {
+	i := strings.LastIndexByte(key, '|')
+	if i < 0 {
+		return key
+	}
+	rel, ok := s.relPath(key[i+1:])
+	if !ok {
+		rel = "<outside>"
+	}
+	return key[:i+1] + rel
+}
+
+// auditPath renders a target path for evidence, never as an absolute location.
+func (s *Session) auditPath(p string) string {
+	if p == "" {
+		return ""
+	}
+	if rel, ok := s.relPath(p); ok {
+		return rel
+	}
+	return "<outside>"
+}
+
 // auditTool records one engine decision. Allow/ask callers must stop on error.
 func (s *Session) auditTool(ctx context.Context, turnID int64, toolName, toolRef, decision, reason string, extra map[string]any) error {
 	detail := map[string]any{"tool": toolName}
@@ -89,10 +144,7 @@ func (s *Session) auditPermissionRule(ctx context.Context, turnID int64, decisio
 }
 
 func (s *Session) auditBackupCreate(ctx context.Context, turnID int64, out rollback.WriteOutcome) {
-	rel := out.Path
-	if r, err := s.root.Rel(out.Path); err == nil {
-		rel = r
-	}
+	rel := s.auditPath(out.Path)
 	s.auditBestEffort(ctx, audit.Record{
 		TurnID: turnID, Action: audit.ActionBackup, Decision: audit.DecisionCreate,
 		Detail: auditDetail(map[string]any{

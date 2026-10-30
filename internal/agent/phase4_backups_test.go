@@ -261,9 +261,19 @@ func TestPhase4ExportAndVerifyChain(t *testing.T) {
 		t.Fatalf("export has %d lines, want %d", lines, res.Rows)
 	}
 	// Evidence is metadata-only: neither the workspace location nor the file
-	// body may appear in the export.
-	if strings.Contains(string(jsonl), f.root.String()) || strings.Contains(string(jsonl), "v1") {
-		t.Fatalf("export leaked workspace path or file content")
+	// body may appear in the export. Compare with separators stripped and
+	// ignoring case, because match keys are lower-cased on Windows and the
+	// path is backslash-escaped one extra level inside the JSON detail string;
+	// a byte-exact check passes locally yet leaks on the Linux CI runner.
+	flatten := func(s string) string {
+		return strings.ToLower(strings.NewReplacer(`\`, "", `/`, "").Replace(s))
+	}
+	body := flatten(string(jsonl))
+	if needle := flatten(f.root.String()); needle != "" && strings.Contains(body, needle) {
+		t.Fatalf("export leaked workspace path %q: %s", f.root.String(), jsonl)
+	}
+	if strings.Contains(body, "v1") {
+		t.Fatalf("export leaked file content: %s", jsonl)
 	}
 	if _, err := os.Stat(res.ManifestPath); err != nil {
 		t.Fatalf("manifest missing: %v", err)

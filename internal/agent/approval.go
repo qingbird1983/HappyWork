@@ -190,7 +190,7 @@ func (s *Session) askApproval(ctx context.Context, call model.ToolCall, meta too
 			TurnID: turnID, Action: audit.ActionApproval, Decision: audit.DecisionDeny,
 			Reason: "hook: " + approvalRes.DenyReason,
 			Detail: auditDetail(map[string]any{
-				"toolRef": meta.Ref, "matchKey": matchKey, "execHash": execHash, "scope": "once",
+				"toolRef": meta.Ref, "matchKey": s.auditKey(matchKey), "execHash": execHash, "scope": "once",
 			}),
 		})
 		return "hook_deny", approvalRes.DenyReason, nil
@@ -281,7 +281,7 @@ func (s *Session) askApproval(ctx context.Context, call model.ToolCall, meta too
 	}
 	if err := s.auditApproval(ctx, turnID, decision, note, map[string]any{
 		"approvalID": payload.ApprovalID, "scope": d.scope, "toolRef": meta.Ref,
-		"matchKey": matchKey, "execHash": execHash, "contentTrust": s.contentTrust(),
+		"matchKey": s.auditKey(matchKey), "execHash": execHash, "contentTrust": s.contentTrust(),
 	}); err != nil {
 		// A denied request already stopped the tool, so a missing audit row is a
 		// logging problem; an allowed one must not run unrecorded.
@@ -302,7 +302,7 @@ func (s *Session) askApproval(ctx context.Context, call model.ToolCall, meta too
 			s.notice("info", "已创建持久写入规则；可在权限规则中查看和撤销")
 			if err := s.auditPermissionRule(ctx, turnID, audit.DecisionCreate,
 				"created from approval "+payload.ApprovalID,
-				map[string]any{"ruleID": rule.ID, "toolRef": meta.Ref, "matchKey": matchKey}); err != nil {
+				map[string]any{"ruleID": rule.ID, "toolRef": meta.Ref, "matchKey": s.auditKey(matchKey)}); err != nil {
 				s.mgr.log.Printf("agent: persist rule audit: %v", err)
 			}
 		}

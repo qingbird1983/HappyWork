@@ -10,9 +10,42 @@ import (
 	"testing"
 
 	"github.com/happywork/happywork/internal/audit"
+	"github.com/happywork/happywork/internal/permission"
 	"github.com/happywork/happywork/internal/storage"
 	"github.com/happywork/happywork/internal/workspace"
 )
+
+// TestPhase4AuditKeyKeepsEvidenceWorkspaceRelative guards the evidence
+// invariant: a match key identifies the granted scope without exporting the
+// user's directory layout. WriteMatchKey lower-cases on Windows, so the
+// comparison has to survive casing and separator differences.
+func TestPhase4AuditKeyKeepsEvidenceWorkspaceRelative(t *testing.T) {
+	f := newFixture(t)
+	s := f.newSession(t)
+	root := f.root.String()
+
+	if got := s.auditKey(permission.WriteMatchKey(root)); got != "builtin://write_file|write|." {
+		t.Fatalf("root scope key = %q", got)
+	}
+	if got := s.auditKey(permission.WriteMatchKey(filepath.Join(root, "src", "cmd"))); got != "builtin://write_file|write|src/cmd" {
+		t.Fatalf("nested scope key = %q", got)
+	}
+	if got := s.auditKey(permission.WriteMatchKey(filepath.Join(filepath.Dir(root), "elsewhere"))); got != "builtin://write_file|write|<outside>" {
+		t.Fatalf("outside scope key = %q", got)
+	}
+	if got := s.auditKey("mcp://demo/tool"); got != "mcp://demo/tool" {
+		t.Fatalf("pathless key must pass through, got %q", got)
+	}
+	if got := s.auditPath(filepath.Join(root, "a.txt")); got != "a.txt" {
+		t.Fatalf("audit path = %q", got)
+	}
+	if got := s.auditPath(filepath.Dir(root)); got != "<outside>" {
+		t.Fatalf("outside audit path = %q", got)
+	}
+	if got := s.auditPath(""); got != "" {
+		t.Fatalf("empty audit path = %q", got)
+	}
+}
 
 func TestPhase4AuditCoversWriteApprovalAndBackup(t *testing.T) {
 	f := newFixture(t)

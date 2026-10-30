@@ -174,6 +174,7 @@ func Hash(prev string, r Record) (string, error)
 | `recovery` | `mark_interrupted` / `mark_unknown` | count | 启动恢复 |
 
 - 工具判定与审批是两条独立记录：判定回答"引擎怎么判"，审批回答"谁批准"。
+- 表中的 `matchKey`/`relPath` 一律是**工作区相对**形式：根目录写成 `.`，子目录写成 `src/cmd`，工作区外的目标写成 `<outside>`。审计会被导出成证据文件，绝对路径等于把用户的目录结构一起交出去；引擎真正匹配用的绝对 `match_key` 只保存在 `permission_rules` 表内，不进审计记录。
 - `relPath` 仅审计备份相关事件；不记录工作区绝对路径、文件内容或工具参数。
 - 现有 Phase 3 的 `AppendAudit(sessionID, action, decision, reason)` 调用全部迁移到 `audit.Record`；旧行保留原字段语义。
 
