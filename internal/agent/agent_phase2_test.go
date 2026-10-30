@@ -197,7 +197,13 @@ func TestWriteDenyWithFeedback(t *testing.T) {
 		t.Fatalf("tool result = %s", toolMsg)
 	}
 	audit, _ := f.store.ListAudit(context.Background(), s.ID())
-	if len(audit) == 0 || audit[0].Decision != "deny" {
+	foundDeny := false
+	for _, row := range audit {
+		if row.Action == "approval" && row.Decision == "deny" && strings.Contains(row.Reason, "文件名不对") {
+			foundDeny = true
+		}
+	}
+	if !foundDeny {
 		t.Fatalf("audit = %+v", audit)
 	}
 }

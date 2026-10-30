@@ -51,6 +51,7 @@ docs/
 | design/phase-3/report.md | 定稿 | Phase 3 验收报告：A1~A8 证据、真机记录、发现缺陷与遗留 |
 | design/phase-4/design.md | 定稿 | Phase 4 施工设计：审计链、备份版本/恢复/写后校验、迁移 0004、API/UI 与测试 |
 | design/phase-4/release-signing.md | 定稿 | Phase 4 发布签名设计：三平台签名、公证、dry-run、凭据卫生与验签 |
+| design/phase-4/report.md | 草稿 | Phase 4 验收报告：门禁与测试证据、A5 真机与 A6 远端 dry-run 待补、实现期间发现与处置 |
 | standards/01 ~ 09 | 定稿 | 仓库结构 / git 工作流 / 文档 / 代码 / 测试 / 安全 / AI 协作 / 体量 / 规范复查（01/04/05 已按本项目回填） |
 | glossary.md | 草稿 | 术语表（面向非技术读者） |
 | research/01-v2-design-review.md | 定稿 | v2 设计简报评审：4 类发现与外部事实核实，V3 修订依据 |

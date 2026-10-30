@@ -68,13 +68,13 @@ Phase 3 证明"控制是确定、可扩展、可追溯的"；Phase 4 证明"**�
 
 ## 5. 验收场景
 
-- [ ] A1 审计链：新行带 `prev_hash/entry_hash`；任一行被改、删、插队可定位到首个坏行；UPDATE/DELETE 被触发器拒绝；验证区分完整、破损、遗留未密封段；重启后继续链接。
-- [ ] A2 覆盖与导出：工具判定、审批、持久规则、Hook、备份/恢复、链验证均有审计；不含正文/提示词/密钥原文；JSONL + manifest 导出可在测试中复算通过。
-- [ ] A3 备份版本：同一文件连续覆盖保留多版本（版本号/哈希/大小/权限/时间正确）；按保留策略裁剪；恢复所选版本成功，恢复前自动备份当前状态，恢复后可再恢复；越界/敏感/身份变化路径被拒绝。
-- [ ] A4 新建撤销与写后校验：新建文件记录 `kind=create`；未修改时可撤销创建并移入备份区；修改后拒绝撤销；写后 SHA-256 一致才成功；故障注入触发自动回滚/移入备份区并审计；备份区软上限触发时拒绝新的覆盖备份（新建不受影响）而非静默丢弃。
+- [x] A1 审计链：新行带 `prev_hash/entry_hash`；任一行被改、删、插队可定位到首个坏行；UPDATE/DELETE 被触发器拒绝；验证区分完整、破损、遗留未密封段；重启后继续链接。
+- [x] A2 覆盖与导出：工具判定、审批、持久规则、Hook、备份/恢复、链验证均有审计；不含正文/提示词/密钥原文；JSONL + manifest 导出可在测试中复算通过。
+- [x] A3 备份版本：同一文件连续覆盖保留多版本（版本号/哈希/大小/权限/时间正确）；按保留策略裁剪；恢复所选版本成功，恢复前自动备份当前状态，恢复后可再恢复；越界/敏感/身份变化路径被拒绝。
+- [x] A4 新建撤销与写后校验：新建文件记录 `kind=create`；未修改时可撤销创建并移入备份区；修改后拒绝撤销；写后 SHA-256 一致才成功；故障注入触发自动回滚/移入备份区并审计；备份区软上限触发时拒绝新的覆盖备份（新建不受影响）而非静默丢弃。
 - [ ] A5 UI/API：审计面板显示最近事件、链状态，可验证/导出；备份面板按文件列版本与大小，可恢复/撤销；运行中会话拒绝恢复并给出明确提示；渲染安全门禁全绿。
-- [ ] A6 签名 dry-run：三平台 CI 能用临时测试凭据完成签名与验签（Windows Authenticode、macOS ad-hoc codesign、Linux GPG），不上传 Release；缺少真实凭据时正式发布**明确失败**而不是发布未签名产物。
-- [ ] A7 真实签名（条件）：所有者提供 Windows 证书、Apple Developer ID/公证凭据、Linux GPG 私钥后，`v*` 标签产物通过 `signtool verify`、`codesign/spctl/stapler`、包签名平台工具（`dpkg-sig`/`rpm --checksig`）与 `gpg --verify SHA256SUMS.asc`；未提供则记录遗留，不伪造证据。
+- [ ] A6 签名 dry-run：三平台 CI 能用临时测试凭据完成签名与验签（Windows Authenticode、macOS ad-hoc codesign、Linux GPG），不上传 Release；缺少真实凭据时正式发布**明确失败**而不是发布未签名产物。取证依赖：`workflow_dispatch` 只对默认分支上存在的 workflow 生效，故 A6 只能在 `release.yml` 合入 main 之后触发（P-015）。
+- [ ] A7 真实签名（条件，**已随首发排期主动延后**）：所有者提供 Windows 证书、Apple Developer ID/公证凭据、Linux GPG 私钥后，`v*` 标签产物通过 `signtool verify`、`codesign/spctl/stapler`、包签名平台工具（`dpkg-sig`/`rpm --checksig`）与 `gpg --verify SHA256SUMS.asc`；未提供则记录遗留，不伪造证据。
 - [ ] A8 门禁：审计/备份/迁移/故障注入测试全绿；`gofmt/vet/golangci-lint/go test/check-size/render-safety` + 前端 lint/typecheck/format/test/build 全绿；三平台 `wails3 build` 与 release dry-run CI 全绿；验收报告落盘。
 
 ## 6. 依赖与风险

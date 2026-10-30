@@ -5,6 +5,11 @@ import type {
   AppInfo,
   ApprovalPayload,
   ApprovalResolvedPayload,
+  AuditExport,
+  AuditPage,
+  AuditVerify,
+  BackupGroup,
+  BackupRestore,
   DeltaPayload,
   DonePayload,
   Message,
@@ -42,6 +47,16 @@ export const api = {
   appInfo: () => Call.ByName(`${SVC}.AppInfo`) as Promise<AppInfo>,
   transcript: (sessionId: string) =>
     Call.ByName(`${SVC}.Transcript`, sessionId) as Promise<Message[]>,
+  listAudit: (sessionId: string, limit: number) =>
+    Call.ByName(`${SVC}.ListAudit`, sessionId, limit) as Promise<AuditPage>,
+  verifyAudit: () => Call.ByName(`${SVC}.VerifyAudit`) as Promise<AuditVerify>,
+  exportAudit: () => Call.ByName(`${SVC}.ExportAudit`) as Promise<AuditExport>,
+  listBackups: (sessionId: string) =>
+    Call.ByName(`${SVC}.ListBackups`, sessionId) as Promise<BackupGroup[]>,
+  restoreBackup: (sessionId: string, backupId: string) =>
+    Call.ByName(`${SVC}.RestoreBackup`, sessionId, backupId) as Promise<BackupRestore>,
+  undoCreatedFile: (sessionId: string, backupId: string) =>
+    Call.ByName(`${SVC}.UndoCreatedFile`, sessionId, backupId) as Promise<BackupRestore>,
 };
 
 export const events = {

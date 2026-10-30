@@ -7,9 +7,12 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"sync"
 
 	_ "modernc.org/sqlite" // pure-Go SQLite driver (ADR-0010); registered as "sqlite"
 
+	"github.com/happywork/happywork/internal/audit"
+	"github.com/happywork/happywork/internal/rollback"
 	"github.com/happywork/happywork/migrations"
 )
 
@@ -32,6 +35,19 @@ func Open(path string) (Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("storage: open %s: %w", path, err)
 	}
+	// One connection on purpose. SQLite pragmas are per connection, so an
+	// unbounded pool silently applied WAL/busy_timeout/foreign_keys only to the
+	// connection that happened to run them, and it let two goroutines open
+	// transactions on the same file: the audit append reads its chain head
+	// before writing, and that read->write upgrade fails with
+	// SQLITE_BUSY_SNAPSHOT, which busy_timeout cannot retry. A single-user
+	// desktop store is better served by serializing access than by WAL
+	// read/write concurrency; the session actor and the panels all do short
+	// queries. Every read-modify-write sequence still needs a transaction (see
+	// sqlite_write.go), because one connection does not make two separate calls
+	// atomic.
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	// WAL + busy timeout: single writer with short concurrent reads.
 	for _, pragma := range []string{
 		"PRAGMA busy_timeout = 5000",
@@ -52,7 +68,8 @@ func Open(path string) (Store, error) {
 }
 
 type sqliteStore struct {
-	db *sql.DB
+	db      *sql.DB
+	auditMu sync.Mutex
 }
 
 func (s *sqliteStore) Close() error { return s.db.Close() }
@@ -137,11 +154,6 @@ func (s *sqliteStore) GetSession(ctx context.Context, id string) (Session, error
 	return sess, err
 }
 
-func (s *sqliteStore) touch(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE sessions SET updated_at = ? WHERE id = ?`, Now(), id)
-	return err
-}
-
 func (s *sqliteStore) UpdateSessionState(ctx context.Context, id, state string) error {
 	if _, err := s.db.ExecContext(ctx, `UPDATE sessions SET state = ?, updated_at = ? WHERE id = ?`, state, Now(), id); err != nil {
 		return err
@@ -154,41 +166,6 @@ func (s *sqliteStore) UpdateSessionTitle(ctx context.Context, id, title string) 
 		return err
 	}
 	return nil
-}
-
-func (s *sqliteStore) NextSeq(ctx context.Context, sessionID string) (int64, error) {
-	var seq sql.NullInt64
-	err := s.db.QueryRowContext(ctx,
-		`SELECT MAX(seq) FROM messages WHERE session_id = ?`, sessionID).Scan(&seq)
-	if err != nil {
-		return 0, err
-	}
-	return seq.Int64 + 1, nil
-}
-
-func (s *sqliteStore) AppendMessage(ctx context.Context, m *Message) error {
-	if m.ID == "" {
-		m.ID = NewID()
-	}
-	if m.CreatedAt == "" {
-		m.CreatedAt = Now()
-	}
-	if m.Trust == "" {
-		m.Trust = TrustTrusted
-	}
-	seq, err := s.NextSeq(ctx, m.SessionID)
-	if err != nil {
-		return err
-	}
-	m.Seq = seq
-	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO messages (id, session_id, seq, role, content, tool_call_id, tool_name, tool_calls_json, turn_id, trust, created_at)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-		m.ID, m.SessionID, m.Seq, m.Role, m.Content, m.ToolCallID, m.ToolName, m.ToolCallsJSON, m.TurnID, m.Trust, m.CreatedAt)
-	if err != nil {
-		return err
-	}
-	return s.touch(ctx, m.SessionID)
 }
 
 func (s *sqliteStore) Transcript(ctx context.Context, sessionID string) ([]Message, error) {
@@ -339,30 +316,195 @@ func (s *sqliteStore) AppendEvent(ctx context.Context, sessionID, typ, payloadJS
 	return err
 }
 
-func (s *sqliteStore) AppendAudit(ctx context.Context, sessionID, action, decision, reason string) error {
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO audit_log (session_id, action, decision, reason, created_at) VALUES (?,?,?,?,?)`,
-		sessionID, action, decision, reason, Now())
-	return err
+// AppendAudit seals one row into the hash chain. The row insert and the head
+// update share one transaction; a failed append leaves the chain unchanged.
+func (s *sqliteStore) AppendAudit(ctx context.Context, entry audit.Record) error {
+	detail, err := audit.NormalizeDetail(entry.Detail)
+	if err != nil {
+		return err
+	}
+	entry.Detail = detail
+	if entry.CreatedAt == "" {
+		entry.CreatedAt = Now()
+	}
+	s.auditMu.Lock()
+	defer s.auditMu.Unlock()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("storage: begin audit: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	var lastID int64
+	var lastHash string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT last_id, last_hash FROM audit_chain WHERE id = 1`).Scan(&lastID, &lastHash); err != nil {
+		return fmt.Errorf("storage: read audit head: %w", err)
+	}
+	entry.PrevHash = lastHash
+	entry.EntryHash, err = audit.Hash(lastHash, entry)
+	if err != nil {
+		return err
+	}
+	res, err := tx.ExecContext(ctx,
+		`INSERT INTO audit_log
+		 (session_id, turn_id, trace_id, action, decision, reason, detail_json, created_at, prev_hash, entry_hash)
+		 VALUES (?,?,?,?,?,?,?,?,?,?)`,
+		entry.SessionID, entry.TurnID, entry.TraceID, entry.Action, entry.Decision,
+		entry.Reason, entry.Detail, entry.CreatedAt, entry.PrevHash, entry.EntryHash)
+	if err != nil {
+		return fmt.Errorf("storage: insert audit: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return fmt.Errorf("storage: audit id: %w", err)
+	}
+	entry.ID = id
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE audit_chain SET last_id = ?, last_hash = ?, updated_at = ? WHERE id = 1`,
+		id, entry.EntryHash, entry.CreatedAt); err != nil {
+		return fmt.Errorf("storage: update audit head: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("storage: commit audit: %w", err)
+	}
+	return nil
 }
 
-func (s *sqliteStore) ListAudit(ctx context.Context, sessionID string) ([]AuditEntry, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, session_id, action, decision, reason, created_at
-		 FROM audit_log WHERE session_id = ? ORDER BY id`, sessionID)
+// ListAudit returns rows in ascending ID order. sessionID="" means all rows;
+// limit>0 returns the newest N rows (still ascending).
+func (s *sqliteStore) ListAudit(ctx context.Context, sessionID string, limit ...int) ([]audit.Record, error) {
+	query := `SELECT id, session_id, turn_id, trace_id, action, decision, reason, detail_json, created_at, prev_hash, entry_hash FROM audit_log`
+	var args []any
+	if sessionID != "" {
+		query += ` WHERE session_id = ?`
+		args = append(args, sessionID)
+	}
+	n := 0
+	if len(limit) > 0 {
+		n = limit[0]
+	}
+	if n > 0 {
+		query = `SELECT * FROM (` + query + ` ORDER BY id DESC LIMIT ?) ORDER BY id ASC`
+		args = append(args, n)
+	} else {
+		query += ` ORDER BY id ASC`
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	var out []AuditEntry
+	var out []audit.Record
 	for rows.Next() {
-		var a AuditEntry
-		if err := rows.Scan(&a.ID, &a.SessionID, &a.Action, &a.Decision, &a.Reason, &a.CreatedAt); err != nil {
+		var a audit.Record
+		if err := rows.Scan(&a.ID, &a.SessionID, &a.TurnID, &a.TraceID, &a.Action, &a.Decision,
+			&a.Reason, &a.Detail, &a.CreatedAt, &a.PrevHash, &a.EntryHash); err != nil {
 			return nil, err
 		}
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+// VerifyAudit recomputes the chain and compares it with the stored head.
+func (s *sqliteStore) VerifyAudit(ctx context.Context) (audit.VerifyResult, error) {
+	rows, err := s.ListAudit(ctx, "")
+	if err != nil {
+		return audit.VerifyResult{}, err
+	}
+	var verifier audit.Verifier
+	for _, row := range rows {
+		verifier.Add(row)
+	}
+	var chainID int64
+	var chainHash string
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT last_id, last_hash FROM audit_chain WHERE id = 1`).Scan(&chainID, &chainHash); err != nil {
+		return audit.VerifyResult{}, fmt.Errorf("storage: read audit head: %w", err)
+	}
+	return verifier.Finish(chainID, chainHash), nil
+}
+
+func (s *sqliteStore) UpdateFileBackupWritten(ctx context.Context, id, writtenSHA, verifiedAt string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE file_backups SET written_sha256 = ?, verified_at = ? WHERE id = ?`,
+		writtenSHA, verifiedAt, id)
+	return err
+}
+
+func (s *sqliteStore) MarkFileBackupRestored(ctx context.Context, id, discardedRel, restoredAt string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE file_backups SET discarded_rel = ?, restored_at = ? WHERE id = ?`,
+		discardedRel, restoredAt, id)
+	return err
+}
+
+func (s *sqliteStore) GetFileBackup(ctx context.Context, id string) (rollback.Backup, error) {
+	var b rollback.Backup
+	var mode int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, session_id, turn_id, rel_path, kind, reason, version, mode, size,
+		        backup_rel, backup_sha256, written_sha256, discarded_rel, restore_of,
+		        created_at, verified_at, restored_at
+		 FROM file_backups WHERE id = ?`, id).
+		Scan(&b.ID, &b.SessionID, &b.TurnID, &b.RelPath, &b.Kind, &b.Reason, &b.Version,
+			&mode, &b.Size, &b.BackupRel, &b.BackupSHA256, &b.WrittenSHA256,
+			&b.DiscardedRel, &b.RestoreOf, &b.CreatedAt, &b.VerifiedAt, &b.RestoredAt)
+	if err == sql.ErrNoRows {
+		return b, fmt.Errorf("storage: backup %s: %w", id, ErrNotFound)
+	}
+	if err != nil {
+		return b, err
+	}
+	b.Mode = uint32(mode)
+	return b, nil
+}
+
+func (s *sqliteStore) LatestFileBackupVersion(ctx context.Context, sessionID, relPath string) (int64, error) {
+	var version int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(version), 0) FROM file_backups WHERE session_id = ? AND rel_path = ?`,
+		sessionID, relPath).Scan(&version)
+	return version, err
+}
+
+func (s *sqliteStore) ListFileBackups(ctx context.Context, sessionID string) ([]rollback.Backup, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, session_id, turn_id, rel_path, kind, reason, version, mode, size,
+		        backup_rel, backup_sha256, written_sha256, discarded_rel, restore_of,
+		        created_at, verified_at, restored_at
+		 FROM file_backups WHERE session_id = ? ORDER BY rel_path, version DESC`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []rollback.Backup
+	for rows.Next() {
+		var b rollback.Backup
+		var mode int64
+		if err := rows.Scan(&b.ID, &b.SessionID, &b.TurnID, &b.RelPath, &b.Kind, &b.Reason,
+			&b.Version, &mode, &b.Size, &b.BackupRel, &b.BackupSHA256, &b.WrittenSHA256,
+			&b.DiscardedRel, &b.RestoreOf, &b.CreatedAt, &b.VerifiedAt, &b.RestoredAt); err != nil {
+			return nil, err
+		}
+		b.Mode = uint32(mode)
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqliteStore) BackupUsage(ctx context.Context) (int64, error) {
+	var total int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(SUM(size), 0) FROM file_backups WHERE backup_rel <> '' OR discarded_rel <> ''`).
+		Scan(&total)
+	return total, err
+}
+
+func (s *sqliteStore) DeleteFileBackup(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM file_backups WHERE id = ?`, id)
+	return err
 }
 
 func (s *sqliteStore) KVGet(ctx context.Context, key string) (string, error) {

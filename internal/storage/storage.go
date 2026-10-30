@@ -6,6 +6,9 @@ package storage
 import (
 	"context"
 	"time"
+
+	"github.com/happywork/happywork/internal/audit"
+	"github.com/happywork/happywork/internal/rollback"
 )
 
 // Session is one conversation bound to a fixed workspace root.
@@ -104,15 +107,8 @@ type PermissionRule struct {
 	UseCount   int64  `json:"useCount"`
 }
 
-// AuditEntry is one immutable audit row (A5 boundary denials; richer use in Phase 4).
-type AuditEntry struct {
-	ID        int64  `json:"id"`
-	SessionID string `json:"sessionId"`
-	Action    string `json:"action"`
-	Decision  string `json:"decision"`
-	Reason    string `json:"reason"`
-	CreatedAt string `json:"createdAt"`
-}
+// AuditEntry is one immutable audit row.
+type AuditEntry = audit.Record
 
 // Store is the persistence surface used by the agent loop.
 type Store interface {
@@ -138,8 +134,18 @@ type Store interface {
 	TouchPermissionRule(ctx context.Context, id string) error
 
 	AppendEvent(ctx context.Context, sessionID, typ, payloadJSON string) error
-	AppendAudit(ctx context.Context, sessionID, action, decision, reason string) error
-	ListAudit(ctx context.Context, sessionID string) ([]AuditEntry, error)
+	AppendAudit(ctx context.Context, entry audit.Record) error
+	ListAudit(ctx context.Context, sessionID string, limit ...int) ([]audit.Record, error)
+	VerifyAudit(ctx context.Context) (audit.VerifyResult, error)
+
+	CreateFileBackup(ctx context.Context, b *rollback.Backup) error
+	UpdateFileBackupWritten(ctx context.Context, id, writtenSHA, verifiedAt string) error
+	MarkFileBackupRestored(ctx context.Context, id, discardedRel, restoredAt string) error
+	GetFileBackup(ctx context.Context, id string) (rollback.Backup, error)
+	LatestFileBackupVersion(ctx context.Context, sessionID, relPath string) (int64, error)
+	ListFileBackups(ctx context.Context, sessionID string) ([]rollback.Backup, error)
+	BackupUsage(ctx context.Context) (int64, error)
+	DeleteFileBackup(ctx context.Context, id string) error
 
 	KVGet(ctx context.Context, key string) (string, error)
 	KVSet(ctx context.Context, key, value string) error

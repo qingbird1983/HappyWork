@@ -20,7 +20,7 @@
 |---|---|---|
 | 审计链开关 | 默认开启，无关闭开关 | ADR-0015；可关闭的审计无意义 |
 | 链算法 | SHA-256 over RFC 8785 JCS；`prev_hash` + 记录规范字段 | 复用 `internal/jcs`，避免编码歧义 |
-| 追加并发 | 单进程互斥 + SQLite 事务；链头 `audit_chain` 同事务更新 | 单实例锁 + 单写者 |
+| 追加并发 | 连接池上限 1（SQLite pragma 按连接生效）+ 单进程互斥 + 事务；链头 `audit_chain` 同事务读、同事务写 | 单实例锁；跨连接的读→写升级会立刻 `SQLITE_BUSY_SNAPSHOT`，busy_timeout 不重试（P-014） |
 | 防改删 | `BEFORE UPDATE/DELETE` 触发器 `RAISE(ABORT)`；插入校验前链头 | 阻止误改与 naive 插入 |
 | 遗留行 | Phase 4 前无 hash 的行只允许出现在首个密封行之前；之后出现空 hash 视为破损 | 不伪造"历史已密封" |
 | 威胁模型 | 防误改/局部篡改；不防拥有完整 DB 写权限的攻击者重写整链；无外部锚定 | ADR-0015 |
@@ -36,27 +36,30 @@
 
 ```
 internal/audit/
-  record.go       Record、规范字段、Hash
-  verify.go       流式验证、VerifyResult、Export（JSONL + manifest）
-  kinds.go        action/decision 常量（tool_call/approval/backup/...）
+  audit.go        Record、规范字段、Hash、action/decision 常量（叶子包）
+  verify.go       流式验证、VerifyResult、Page
+  export.go       JSONL + manifest 导出
 internal/rollback/
+  rollback.go     Backup/BackupGroup、Store 接口、Limits、WriteOutcome/RestoreOutcome、WithTurn
+  files.go        原子复制/写、SHA-256、跨卷移动、裁剪与容量
   writer.go       覆盖/新建写入、版本、写后校验、自动回滚
   restore.go      恢复、撤销创建、路径复核
-  store.go        RecordStore 接口、Limits、裁剪与容量
 internal/storage/
-  audit.go        链式 AppendAudit、ListAudit、VerifyAudit
-  backups.go      file_backups CRUD 与 usage
-  sqlite.go       迁移后装配、触发器
+  storage.go      Store 接口（审计/备份方法）+ 类型别名
+  sqlite.go       链式 AppendAudit、ListAudit、VerifyAudit、file_backups CRUD
 internal/agent/
   audit.go        审计 helper（trace/turn、fail-closed 放行）
-  exec.go         判定/审批/规则/备份审计接线
+  exec.go         判定/规则/备份审计接线与执行链路
+  approval.go     审批对话构造、审批与持久规则审计（askApproval 自 exec.go 拆出以守 600 行）
   manager.go      rollback.Writer 构造与桌面 API 入口
 internal/desktop/
   service.go      审计/备份服务方法
 frontend/src/components/
-  AuditPanel.tsx  最近事件、链状态、验证、导出
+  AuditPanel.tsx  链状态、破损横幅、验证、导出、事件表
   BackupsPanel.tsx 文件/版本、恢复、撤销
+  SecurityPanel.tsx 两面板的抽屉容器
 migrations/0004_phase4.sql
+scripts/check-version.sh
 .github/workflows/release.yml
 ```
 
@@ -171,6 +174,7 @@ func Hash(prev string, r Record) (string, error)
 | `recovery` | `mark_interrupted` / `mark_unknown` | count | 启动恢复 |
 
 - 工具判定与审批是两条独立记录：判定回答"引擎怎么判"，审批回答"谁批准"。
+- 表中的 `matchKey`/`relPath` 一律是**工作区相对**形式：根目录写成 `.`，子目录写成 `src/cmd`，工作区外的目标写成 `<outside>`。审计会被导出成证据文件，绝对路径等于把用户的目录结构一起交出去；引擎真正匹配用的绝对 `match_key` 只保存在 `permission_rules` 表内，不进审计记录。
 - `relPath` 仅审计备份相关事件；不记录工作区绝对路径、文件内容或工具参数。
 - 现有 Phase 3 的 `AppendAudit(sessionID, action, decision, reason)` 调用全部迁移到 `audit.Record`；旧行保留原字段语义。
 
@@ -293,16 +297,18 @@ CREATE INDEX idx_file_backups_session ON file_backups (session_id, created_at);
 ### 6.2 桌面 API
 
 ```go
-ListAudit(sessionID string, limit int) (AuditPage, error)
-VerifyAudit() (AuditVerify, error)
-ExportAudit() (AuditExport, error)
-ListBackups(sessionID string) ([]BackupGroup, error)
-RestoreBackup(sessionID, backupID string) (BackupRestore, error)
-UndoCreatedFile(sessionID, backupID string) (BackupRestore, error)
+ListAudit(sessionID string, limit int) (audit.Page, error)
+VerifyAudit() (audit.VerifyResult, error)
+ExportAudit() (audit.ExportResult, error)
+ListBackups(sessionID string) ([]rollback.BackupGroup, error)
+RestoreBackup(sessionID, backupID string) (rollback.RestoreOutcome, error)
+UndoCreatedFile(sessionID, backupID string) (rollback.RestoreOutcome, error)
 ```
 
-- `AuditPage` 含最近 N 条（默认 100，上限 500）与当前验证结果；`AuditVerify` 见 §4.4；`AuditExport` 含 jsonl/manifest 路径与结果。
-- `BackupGroup` 按 `rel_path` 聚合版本；`BackupRestore` 含 restored/created、sha256、是否自动回滚、提示。
+绑定方法直接返回 `audit`/`rollback` 的结构体（JSON 标签为小驼峰），不再在 `desktop` 里复制一层 DTO；`audit.Page` 含 `entries/verify/total`，`audit.ExportResult` 含 `jsonlPath/manifestPath/rows/verify`，`rollback.RestoreOutcome` 含 `backupId/relPath/restored/created/alreadyAbsent/safetyBackupId/sha256`。
+
+- `Page` 含最近 N 条（默认 100，上限 500）与当前验证结果；`VerifyResult` 见 §4.4；`ExportResult` 含 jsonl/manifest 路径与结果。
+- `BackupGroup` 按 `rel_path` 聚合版本；`RestoreOutcome` 含 restored/created、sha256 与安全副本 ID。
 - 恢复/撤销审计由 `agent.Manager` 写，trace 新生成；错误返回中文可读文本。
 
 ### 6.3 前端

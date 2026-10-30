@@ -3,8 +3,16 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
+
+	"github.com/happywork/happywork/internal/audit"
+	"github.com/happywork/happywork/internal/hook"
+	"github.com/happywork/happywork/internal/model"
+	"github.com/happywork/happywork/internal/permission"
+	"github.com/happywork/happywork/internal/storage"
+	"github.com/happywork/happywork/internal/tool"
 )
 
 var (
@@ -163,4 +171,147 @@ outer:
 			}
 		}
 	}
+}
+
+// askApproval emits the dialog and waits for a decision (or approval timeout →
+// paused → Resume). It persists the decided approval row, audits the decision
+// fail-closed for an allow, and stores the reusable rule for a persistent scope.
+func (s *Session) askApproval(ctx context.Context, call model.ToolCall, meta tool.Meta, args map[string]any, canonical, normalizedPath, matchKey, execHash string, verdict permission.Verdict, hookWarnings []string, recordID string, turnID int64) (decision, note string, err error) {
+	sessID := s.info.ID
+	// before_approval hooks may add warnings, demand a block-level dialog or
+	// deny the call outright; they cannot change arguments.
+	approvalRes := s.runHooks(ctx, hook.Event{
+		Point: hook.BeforeApproval, SessionID: sessID, TurnID: turnID,
+		ToolRef: meta.Ref, ToolName: meta.Name, Action: meta.Action, Trust: meta.Trust,
+		Args: args, Warnings: hookWarnings,
+	}, nil)
+	if approvalRes.Denied() {
+		s.auditBestEffort(ctx, audit.Record{
+			TurnID: turnID, Action: audit.ActionApproval, Decision: audit.DecisionDeny,
+			Reason: "hook: " + approvalRes.DenyReason,
+			Detail: auditDetail(map[string]any{
+				"toolRef": meta.Ref, "matchKey": s.auditKey(matchKey), "execHash": execHash, "scope": "once",
+			}),
+		})
+		return "hook_deny", approvalRes.DenyReason, nil
+	}
+	level := verdict.Level
+	if approvalRes.EscalateBlock {
+		level = permission.LevelBlock
+	}
+	warnings := append(append([]string{}, hookWarnings...), approvalRes.Warnings...)
+	desc := describeCall(meta, args, normalizedPath, s.root, meta.Source)
+	options := []ApprovalOption{{Scope: "once", Label: "仅本次允许", Description: "只执行这一次"}}
+	allowSession := verdict.Scope == permission.ScopeSession || verdict.Scope == permission.ScopePersistent
+	if allowSession {
+		scopeText := "本会话内"
+		if meta.Ref == "builtin://write_file" {
+			scopeText = "本会话内写该目录下"
+		}
+		options = append(options, ApprovalOption{
+			Scope:       "session",
+			Label:       "本会话内允许",
+			Description: scopeText + "不再询问",
+		})
+	}
+	allowPersistent := verdict.PersistentAllowed && matchKey != ""
+	if allowPersistent {
+		options = append(options, ApprovalOption{
+			Scope:       "persistent",
+			Label:       "持久允许（需输入短语）",
+			Description: "本机所有会话有效；可在权限规则中查看和撤销",
+		})
+	}
+	trustWarning := ""
+	if s.contentTrust() == permission.Untrusted {
+		trustWarning = "当前回合包含外部不可信内容，本次仅允许一次"
+	}
+	quotaNotice := ""
+	if verdict.QuotaExceeded {
+		quotaNotice = "自动放行限额已触发，本次需要你确认"
+	}
+	payload := ApprovalPayload{
+		ApprovalID:   storage.NewID(),
+		SessionID:    sessID,
+		ToolCallID:   call.ID,
+		ToolName:     meta.Name,
+		ToolRef:      meta.Ref,
+		Level:        level,
+		Title:        desc.title,
+		Summary:      desc.summary,
+		Fields:       desc.fields,
+		Preview:      desc.preview,
+		ScopeOptions: options,
+		Source:       meta.Source,
+		Reversible:   meta.Reversible,
+		ContentTrust: s.contentTrust(),
+		TrustWarning: trustWarning,
+		QuotaNotice:  quotaNotice,
+		Warnings:     warnings,
+		Preset:       s.preset(),
+	}
+	d, err := s.awaitApproval(ctx, payload, canonical, allowSession, allowPersistent)
+	if err != nil {
+		return "", "", err
+	}
+	decision = "deny"
+	note = d.feedback
+	if d.allow {
+		decision = "allow"
+	}
+	now := storage.Now()
+	row := storage.Approval{
+		ID:           payload.ApprovalID,
+		SessionID:    sessID,
+		TurnID:       turnID,
+		ToolCallID:   recordID,
+		ToolRef:      meta.Ref,
+		MatchKey:     matchKey,
+		Level:        level,
+		Decision:     decision,
+		Scope:        d.scope,
+		ArgsJSON:     canonical,
+		ExecHash:     execHash,
+		ContentTrust: s.contentTrust(),
+		Note:         note,
+		DecidedAt:    now,
+	}
+	if err := s.mgr.store.AppendApproval(ctx, &row); err != nil {
+		s.mgr.log.Printf("agent: persist approval: %v", err)
+	}
+	if err := s.auditApproval(ctx, turnID, decision, note, map[string]any{
+		"approvalID": payload.ApprovalID, "scope": d.scope, "toolRef": meta.Ref,
+		"matchKey": s.auditKey(matchKey), "execHash": execHash, "contentTrust": s.contentTrust(),
+	}); err != nil {
+		// A denied request already stopped the tool, so a missing audit row is a
+		// logging problem; an allowed one must not run unrecorded.
+		if d.allow {
+			return "", "", fmt.Errorf("agent: audit approval: %w", err)
+		}
+		s.mgr.log.Printf("agent: persist approval audit: %v", err)
+	}
+	if d.allow && d.scope == permission.ScopePersistent && matchKey != "" {
+		rule := storage.PermissionRule{
+			ToolRef: meta.Ref, Action: meta.Action, MatchKey: matchKey,
+			Note: "created from approval " + payload.ApprovalID,
+		}
+		if err := s.mgr.store.CreatePermissionRule(ctx, &rule); err != nil {
+			s.mgr.log.Printf("agent: persist permission rule: %v", err)
+			s.notice("warn", "持久规则保存失败，本次批准仍然有效")
+		} else {
+			s.notice("info", "已创建持久写入规则；可在权限规则中查看和撤销")
+			if err := s.auditPermissionRule(ctx, turnID, audit.DecisionCreate,
+				"created from approval "+payload.ApprovalID,
+				map[string]any{"ruleID": rule.ID, "toolRef": meta.Ref, "matchKey": s.auditKey(matchKey)}); err != nil {
+				s.mgr.log.Printf("agent: persist rule audit: %v", err)
+			}
+		}
+	}
+	s.mgr.emitEvent(sessID, EventApprovalResolved, ApprovalResolvedPayload{
+		SessionID: sessID, ApprovalID: payload.ApprovalID, Decision: decision, Scope: d.scope,
+	})
+	if d.allow {
+		return decision, "", nil
+	}
+	return decision, note, nil
 }

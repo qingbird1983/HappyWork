@@ -7,7 +7,9 @@ import { SafeText } from "./render";
 import { ToolBlock } from "./components/ToolBlock";
 import { ApprovalDialog } from "./components/ApprovalDialog";
 import { PermissionRules } from "./components/PermissionRules";
-import type { ApprovalPayload } from "./types";
+import { AuditList, AuditStatus } from "./components/AuditPanel";
+import { BackupConfirm, BackupList } from "./components/BackupsPanel";
+import type { ApprovalPayload, AuditRecord, AuditVerify, FileBackup } from "./types";
 
 const payloads = [
   `<script>alert("xss")</script>`,
@@ -154,5 +156,150 @@ describe("PermissionRules", () => {
     expect(html).toContain("撤销");
     expect(html).not.toMatch(/<img/i);
     expect(html).toContain("&lt;img");
+  });
+});
+
+const brokenVerify: AuditVerify = {
+  ok: false,
+  sealedRows: 7,
+  legacyRows: 2,
+  lastId: 9,
+  headHash: "deadbeef",
+  brokenId: 5,
+  brokenReason: `entry_hash 不匹配 <script>alert(1)</script>`,
+  headMatch: false,
+};
+
+const auditRow: AuditRecord = {
+  id: 12,
+  sessionId: "s1",
+  turnId: 3,
+  traceId: "t1",
+  action: "tool_call",
+  decision: `deny"><img src=x onerror=alert(1)>`,
+  reason: `<script>alert(1)</script> <iframe src="https://evil.example"></iframe>`,
+  detail: `{"relPath":"<script>x</script>"}`,
+  createdAt: "2026-10-30T08:15:30Z",
+  prevHash: "aa",
+  entryHash: "bb",
+};
+
+describe("AuditPanel", () => {
+  it("escapes audit reasons and whitelists the decision class", () => {
+    const html = renderToStaticMarkup(<AuditList entries={[auditRow]} />);
+    expect(html).not.toMatch(/<script|<img|<iframe/i);
+    expect(html).toContain("&lt;iframe");
+    expect(html).toContain("&lt;script&gt;");
+    // The hostile decision value stays text and never becomes a class name.
+    expect(html).toContain('class="audit-decision other"');
+    expect(html).toContain("08:15:30");
+  });
+
+  it("states a broken chain with the first bad id instead of hiding it", () => {
+    const html = renderToStaticMarkup(<AuditStatus verify={brokenVerify} />);
+    expect(html).toContain("链状态：破损");
+    expect(html).toContain("第 5 条起中断");
+    expect(html).toContain('class="chain broken"');
+    expect(html).not.toMatch(/<script/i);
+    expect(html).toContain("&lt;script&gt;");
+  });
+
+  it("reports legacy rows without claiming the whole history is sealed", () => {
+    const html = renderToStaticMarkup(
+      <AuditStatus verify={{ ...brokenVerify, ok: true, brokenId: undefined, brokenReason: "" }} />,
+    );
+    expect(html).toContain("链状态：完整（2 条旧记录未密封）");
+    expect(html).not.toContain("chain-banner");
+  });
+});
+
+const overwriteBackup: FileBackup = {
+  id: "b1",
+  sessionId: "s1",
+  turnId: 2,
+  relPath: "notes/a.md",
+  kind: "overwrite",
+  reason: "tool_write",
+  version: 3,
+  mode: 420,
+  size: 2048,
+  backupRel: "backups/s1/notes/a.md/v000003-b1.bak",
+  backupSha256: "aa",
+  writtenSha256: "bb",
+  createdAt: "2026-10-30T08:15:30Z",
+  verifiedAt: "2026-10-30T08:15:31Z",
+};
+
+// Without verified_at the version never passed the post-write hash check, so it
+// is listed but not offered as a restore source.
+const unverifiedBackup: FileBackup = {
+  ...overwriteBackup,
+  id: "b2",
+  version: 2,
+  verifiedAt: undefined,
+};
+
+const createBackup: FileBackup = {
+  ...overwriteBackup,
+  id: "b3",
+  version: 1,
+  kind: "create",
+  backupRel: "",
+  writtenSha256: "cc",
+};
+
+const incompleteCreate: FileBackup = { ...createBackup, id: "b4", version: 0, writtenSha256: "" };
+
+// Paths come from the model, so they must stay escaped text.
+const hostilePath = `notes/<img src=x onerror=alert(1)>.md`;
+
+describe("BackupsPanel", () => {
+  it("escapes backup paths and offers restore only for verified overwrites", () => {
+    const html = renderToStaticMarkup(
+      <BackupList
+        groups={[
+          { relPath: hostilePath, backups: [overwriteBackup, unverifiedBackup] },
+          { relPath: "notes/b.md", backups: [createBackup, incompleteCreate] },
+        ]}
+        busy={false}
+        onPick={() => {}}
+      />,
+    );
+    expect(html).not.toMatch(/<img/i);
+    expect(html).toContain("&lt;img");
+    expect(html).toContain("2.0 KiB");
+    expect(html.match(/恢复/g)).toHaveLength(1);
+    expect(html.match(/撤销创建/g)).toHaveLength(1);
+    expect(html).toContain("未确认");
+    expect(html).toContain("未完成");
+  });
+
+  it("disables restore and undo while the session is running", () => {
+    const html = renderToStaticMarkup(
+      <BackupList
+        groups={[{ relPath: "notes/a.md", backups: [overwriteBackup, createBackup] }]}
+        busy
+        onPick={() => {}}
+      />,
+    );
+    expect(html.match(/disabled/g)).toHaveLength(2);
+  });
+
+  it("explains the safety copy before restoring", () => {
+    const html = renderToStaticMarkup(
+      <BackupConfirm
+        pending={{ mode: "restore", backup: { ...overwriteBackup, relPath: hostilePath } }}
+      />,
+    );
+    expect(html).toContain("当前内容会先成为新版本");
+    expect(html).not.toMatch(/<img/i);
+    expect(html).toContain("&lt;img");
+  });
+
+  it("explains that undo keeps the content in the backup area", () => {
+    const html = renderToStaticMarkup(
+      <BackupConfirm pending={{ mode: "undo", backup: createBackup }} />,
+    );
+    expect(html).toContain("不会永久删除");
   });
 });

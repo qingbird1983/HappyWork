@@ -8,6 +8,7 @@ import (
 
 	"github.com/happywork/happywork/internal/hook"
 	"github.com/happywork/happywork/internal/permission"
+	"github.com/happywork/happywork/internal/rollback"
 	"github.com/happywork/happywork/internal/storage"
 	"github.com/happywork/happywork/internal/tool"
 	"github.com/happywork/happywork/internal/workspace"
@@ -30,10 +31,11 @@ type command struct {
 // Session drives one conversation. A single actor goroutine serializes state
 // transitions; Cancel is the one direct entry point (design.md §4).
 type Session struct {
-	mgr   *Manager
-	info  storage.Session
-	root  workspace.Root
-	tools *tool.Registry
+	mgr     *Manager
+	info    storage.Session
+	root    workspace.Root
+	tools   *tool.Registry
+	backups *rollback.Writer
 
 	mu                  sync.Mutex
 	state               string
@@ -44,6 +46,7 @@ type Session struct {
 	pendingAllowSession bool
 	pendingAllowPersist bool
 	turnUntrusted       bool
+	traceID             string
 
 	cmds      chan command
 	approvals chan approvalDecision
@@ -53,7 +56,7 @@ type Session struct {
 	budget *budgetState
 }
 
-func newSession(mgr *Manager, info storage.Session, root workspace.Root, reg *tool.Registry) *Session {
+func newSession(mgr *Manager, info storage.Session, root workspace.Root, reg *tool.Registry, backups *rollback.Writer) *Session {
 	state := info.State
 	if state == "" {
 		state = StateIdle
@@ -63,6 +66,7 @@ func newSession(mgr *Manager, info storage.Session, root workspace.Root, reg *to
 		info:      info,
 		root:      root,
 		tools:     reg,
+		backups:   backups,
 		state:     state,
 		cmds:      make(chan command, 1),
 		approvals: make(chan approvalDecision, 4),
@@ -254,6 +258,7 @@ func (s *Session) setState(state string) {
 func (s *Session) run(ctx context.Context, userText string, resume bool) {
 	bg := context.Background()
 	sessID := s.info.ID
+	s.beginTrace()
 
 	if !resume {
 		userMsg := storage.Message{ID: storage.NewID(), SessionID: sessID, Role: storage.RoleUser, Content: userText, TurnID: 1}

@@ -10,24 +10,33 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/happywork/happywork/internal/rollback"
+	"github.com/happywork/happywork/internal/storage"
 	"github.com/happywork/happywork/internal/workspace"
 )
 
 func newWrite(t *testing.T) (*WriteFile, string, string) {
 	t.Helper()
 	base := t.TempDir()
-	root, err := workspace.NewRoot(filepath.Join(base, "ws"))
+	wsDir := filepath.Join(base, "ws")
+	if err := os.MkdirAll(wsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	root, err := workspace.NewRoot(wsDir)
 	if err != nil {
-		if err := os.Mkdir(filepath.Join(base, "ws"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		root, err = workspace.NewRoot(filepath.Join(base, "ws"))
-		if err != nil {
-			t.Fatal(err)
-		}
+		t.Fatal(err)
+	}
+	store, err := storage.Open(filepath.Join(base, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if err := store.CreateSession(context.Background(), &storage.Session{ID: "sess1", WorkspaceRoot: root.String()}); err != nil {
+		t.Fatal(err)
 	}
 	backups := filepath.Join(base, "backups")
-	return NewWriteFile(root, backups, "sess1"), root.String(), backups
+	writer := rollback.NewWriter(root, backups, "sess1", store, rollback.DefaultLimits())
+	return NewWriteFile(root, writer), root.String(), backups
 }
 
 func TestWriteFileCreateAndOverwrite(t *testing.T) {
@@ -44,7 +53,7 @@ func TestWriteFileCreateAndOverwrite(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 	res := out.(WriteResult)
-	if !res.Created || res.BackupSaved || res.BytesWritten != len("第一版") {
+	if !res.Created || res.BackupSaved || res.BytesWritten != len("第一版") || !res.Verified || res.Version != 1 {
 		t.Fatalf("create result = %+v", res)
 	}
 	if err := os.Chmod(filepath.Join(root, "docs", "a.md"), 0o600); err != nil {
@@ -55,7 +64,7 @@ func TestWriteFileCreateAndOverwrite(t *testing.T) {
 		t.Fatalf("overwrite: %v", err)
 	}
 	res = out.(WriteResult)
-	if res.Created || !res.BackupSaved {
+	if res.Created || !res.BackupSaved || !res.Verified || res.BackupID == "" || res.Version != 2 {
 		t.Fatalf("overwrite result = %+v", res)
 	}
 	body, _ := os.ReadFile(filepath.Join(root, "docs", "a.md"))
@@ -71,7 +80,11 @@ func TestWriteFileCreateAndOverwrite(t *testing.T) {
 			t.Fatalf("mode = %o, want 600 (preserved)", info.Mode().Perm())
 		}
 	}
-	backup, err := os.ReadFile(filepath.Join(backups, "sess1", "docs", "a.md"))
+	versions, err := filepath.Glob(filepath.Join(backups, "sess1", "docs", "a.md", "*.bak"))
+	if err != nil || len(versions) != 1 {
+		t.Fatalf("backup versions = %v, %v", versions, err)
+	}
+	backup, err := os.ReadFile(versions[0])
 	if err != nil {
 		t.Fatalf("backup missing: %v", err)
 	}
@@ -127,9 +140,9 @@ func TestWriteFileRefusesUnbackedOverwrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wt := NewWriteFile(root, "", "")
+	wt := NewWriteFile(root, nil)
 	_, err = wt.Exec(context.Background(), json.RawMessage(`{"path":"a.txt","content":"new"}`))
-	if err == nil || !strings.Contains(err.Error(), "backup") {
+	if err == nil || !strings.Contains(err.Error(), "backup writer") {
 		t.Fatalf("err = %v, want backup refusal", err)
 	}
 	body, _ := os.ReadFile(filepath.Join(rootDir, "a.txt"))

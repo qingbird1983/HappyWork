@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/happywork/happywork/internal/agent"
+	"github.com/happywork/happywork/internal/audit"
 	"github.com/happywork/happywork/internal/desktop"
 	"github.com/happywork/happywork/internal/hook"
 	"github.com/happywork/happywork/internal/mcp"
@@ -53,11 +54,19 @@ func main() {
 		logger.Printf("recover interrupted sessions: %v", err)
 	} else if n > 0 {
 		logger.Printf("marked %d interrupted session(s)", n)
+		appendAudit(logger, store, audit.Record{
+			Action: audit.ActionRecovery, Decision: audit.DecisionInterrupted,
+			Reason: "startup recovery", Detail: storage.MustJSON(map[string]any{"count": n}),
+		})
 	}
 	if n, err := store.MarkRunningToolCallsUnknown(context.Background()); err != nil {
 		logger.Printf("mark unknown tool calls: %v", err)
 	} else if n > 0 {
 		logger.Printf("marked %d tool call(s) unknown", n)
+		appendAudit(logger, store, audit.Record{
+			Action: audit.ActionRecovery, Decision: audit.DecisionUnknown,
+			Reason: "crash during tool execution", Detail: storage.MustJSON(map[string]any{"count": n}),
+		})
 	}
 
 	dataDir := appDataDir()
@@ -84,9 +93,11 @@ func main() {
 		}
 	}
 	hookAudit := func(ev hook.Event, name, kind, reason string) {
-		if err := store.AppendAudit(context.Background(), ev.SessionID, name, kind, reason); err != nil {
-			logger.Printf("hook audit: %v", err)
-		}
+		appendAudit(logger, store, audit.Record{
+			SessionID: ev.SessionID, TurnID: ev.TurnID, Action: audit.ActionHook,
+			Decision: kind, Reason: reason,
+			Detail: storage.MustJSON(map[string]any{"hook": name, "point": ev.Point}),
+		})
 		logger.Printf("hook %s %s: %s", name, kind, reason)
 	}
 	hookRunner, hookInfo, hookErr := hook.LoadDir(hookDir, hook.Builtins(), hookAudit)
@@ -180,6 +191,14 @@ func startMCP(dataDir string, lg *log.Logger) (*mcp.Manager, string) {
 	mgr.Start(ctx)
 	lg.Printf("mcp: %d server(s) configured", enabled)
 	return mgr, ""
+}
+
+// appendAudit writes one best-effort audit row during startup or from the
+// hook callback. Allow-path audits inside the agent are fail-closed separately.
+func appendAudit(logger *log.Logger, store storage.Store, rec audit.Record) {
+	if err := store.AppendAudit(context.Background(), rec); err != nil {
+		logger.Printf("audit: %v", err)
+	}
 }
 
 // newLogger writes to stderr (visible in console builds) and appends to the
