@@ -1,6 +1,7 @@
 # CI —— 门禁流水线（Go + 前端 TS + 三平台构建；命令与 docs/standards/04 §1、05 §1 保持一致）
 # 门禁组合：gofmt / golangci-lint / go test / 前端 lint+typecheck / check-size（体量哨兵）。
 # Phase 1 验收 A1（一票否决）：windows/macos/linux 三平台 wails3 build 矩阵。
+# Linux 依赖：Wails v3.0.0 默认后端 = GTK4 + WebKitGTK 6.0（pkg-config: gtk4 webkitgtk-6.0）。
 
 name: CI
 
@@ -19,6 +20,13 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: ">=1.26"
+
+      # Wails 及其依赖在 Linux 上经 pkg-config 找 gtk4/webkitgtk-6.0，
+      # 缺失时 golangci-lint / go test 连类型检查都过不了。
+      - name: 安装 Linux GUI 依赖（Wails 运行时）
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev
 
       # ── Go 门禁 ──────────────────────────────────────────
       - name: fmt（格式化检查）
@@ -46,8 +54,7 @@ jobs:
       - name: check-size
         run: bash scripts/check-size
 
-  # A1 三平台构建（roadmap phase-1 §5）。Linux webkitgtk 环境允许首期失败
-  # 显式标红（design/phase-1 §14 风险），修复后移除 continue-on-error。
+  # A1 三平台构建（roadmap phase-1 §5）。
   build:
     strategy:
       fail-fast: false
@@ -57,7 +64,6 @@ jobs:
           - os: macos-latest
           - os: ubuntu-latest
     runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.os == 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -65,14 +71,16 @@ jobs:
         with:
           go-version: ">=1.26"
 
-      - name: 安装 Linux webkitgtk 依赖（Wails 运行时）
+      - name: 安装 Linux GUI 依赖（Wails 运行时）
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev
 
       - name: 安装 wails3 CLI（钉 v3.0.0，ADR-0001）
         run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
 
+      # shell: bash——Windows 默认 pwsh 会把 $(...) 当 PowerShell 子表达式解析。
       - name: wails3 build
+        shell: bash
         run: "$(go env GOPATH)/bin/wails3 build"
