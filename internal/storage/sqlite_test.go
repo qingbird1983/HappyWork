@@ -2,8 +2,11 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
+
+	"github.com/happywork/happywork/migrations"
 )
 
 func openTemp(t *testing.T) Store {
@@ -85,7 +88,8 @@ func TestMarkInterruptedNonTerminal(t *testing.T) {
 		"a": "thinking",
 		"b": "idle",
 		"c": "completed",
-		"d": "error",
+		"d": "paused",
+		"e": "awaiting_approval",
 	} {
 		sess := Session{ID: id, WorkspaceRoot: "ws", State: state}
 		if err := s.CreateSession(ctx, &sess); err != nil {
@@ -96,10 +100,10 @@ func TestMarkInterruptedNonTerminal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MarkInterruptedNonTerminal: %v", err)
 	}
-	if n != 2 {
-		t.Fatalf("marked %d, want 2", n)
+	if n != 3 {
+		t.Fatalf("marked %d, want 3", n)
 	}
-	for id, want := range map[string]string{"a": "interrupted", "b": "interrupted", "c": "completed"} {
+	for id, want := range map[string]string{"a": "interrupted", "b": "idle", "c": "completed", "d": "interrupted", "e": "interrupted"} {
 		sess, err := s.GetSession(ctx, id)
 		if err != nil {
 			t.Fatal(err)
@@ -127,5 +131,127 @@ func TestAuditAndEvents(t *testing.T) {
 	}
 	if err := s.UpdateToolCallResult(ctx, "tc1", `{"ok":true}`, "ok"); err != nil {
 		t.Fatalf("UpdateToolCallResult: %v", err)
+	}
+}
+
+func TestPhase2ColumnsRoundtrip(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	sess := Session{ID: "s2", WorkspaceRoot: "ws", ModelID: "deepseek-flash"}
+	if err := s.CreateSession(ctx, &sess); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetSession(ctx, "s2")
+	if err != nil || got.ModelID != "deepseek-flash" {
+		t.Fatalf("model id roundtrip: %+v, %v", got, err)
+	}
+	m := Message{SessionID: "s2", Role: RoleTool, Content: `{"ok":true}`, TurnID: 3, Trust: TrustUntrusted}
+	if err := s.AppendMessage(ctx, &m); err != nil {
+		t.Fatal(err)
+	}
+	msgs, err := s.Transcript(ctx, "s2")
+	if err != nil || len(msgs) != 1 {
+		t.Fatalf("transcript: %+v, %v", msgs, err)
+	}
+	if msgs[0].TurnID != 3 || msgs[0].Trust != TrustUntrusted {
+		t.Fatalf("turn/trust lost: %+v", msgs[0])
+	}
+	tc := ToolCallRecord{
+		SessionID: "s2", TurnID: 3, Name: "write_file", ToolRef: "builtin://write_file",
+		MatchKey: "k", Risk: "ask", Reversible: true, Decision: "allow",
+		ArgsJSON: `{}`, Status: "running",
+	}
+	if err := s.AppendToolCall(ctx, &tc); err != nil {
+		t.Fatal(err)
+	}
+	var status string
+	if err := s.(*sqliteStore).db.QueryRowContext(ctx,
+		`SELECT status FROM tool_calls WHERE id = ?`, tc.ID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "running" {
+		t.Fatalf("status = %s", status)
+	}
+	if n, err := s.MarkRunningToolCallsUnknown(ctx); err != nil || n != 1 {
+		t.Fatalf("MarkRunningToolCallsUnknown = %d, %v", n, err)
+	}
+	if err := s.(*sqliteStore).db.QueryRowContext(ctx,
+		`SELECT status FROM tool_calls WHERE id = ?`, tc.ID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "unknown" {
+		t.Fatalf("status after crash = %s, want unknown", status)
+	}
+}
+
+func TestSessionApprovalGrant(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	if err := s.CreateSession(ctx, &Session{ID: "s1", WorkspaceRoot: "ws"}); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := s.HasSessionApproval(ctx, "s1", "write:docs"); err != nil || ok {
+		t.Fatalf("unexpected pre-grant: ok=%v err=%v", ok, err)
+	}
+	if err := s.AppendApproval(ctx, &Approval{
+		ID: "a1", SessionID: "s1", ToolRef: "builtin://write_file", MatchKey: "write:docs",
+		Level: "confirm", Decision: "allow", Scope: "session", ArgsJSON: `{}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := s.HasSessionApproval(ctx, "s1", "write:docs"); err != nil || !ok {
+		t.Fatalf("grant not found: ok=%v err=%v", ok, err)
+	}
+	if ok, _ := s.HasSessionApproval(ctx, "s1", "write:other"); ok {
+		t.Fatal("grant leaked to another match key")
+	}
+}
+
+func TestMigrationUpgradeFromPhase1(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "old.db")
+
+	// Build a Phase 1 database: apply only 0001 and record version 1.
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stmts, err := migrations.Ordered()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(stmts[0].SQL); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`INSERT INTO kv (key, value) VALUES (?, '1')`, schemaVersionKey); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`INSERT INTO sessions (id, workspace_root, state, created_at, updated_at)
+		VALUES ('old', 'ws', 'completed', 't', 't')`); err != nil {
+		t.Fatal(err)
+	}
+	_ = raw.Close()
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("upgrade open: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+	if v, _ := s.KVGet(context.Background(), schemaVersionKey); v != "2" {
+		t.Fatalf("schema version = %q, want 2", v)
+	}
+	old, err := s.GetSession(context.Background(), "old")
+	if err != nil {
+		t.Fatalf("old session unreadable after upgrade: %v", err)
+	}
+	if old.ModelID != "" || old.State != "completed" {
+		t.Fatalf("old session defaults wrong: %+v", old)
+	}
+	// The new table must be usable.
+	if err := s.AppendApproval(context.Background(), &Approval{SessionID: "old", ToolRef: "x", Level: "confirm", Decision: "allow", Scope: "once"}); err != nil {
+		t.Fatalf("approvals table unusable after upgrade: %v", err)
 	}
 }

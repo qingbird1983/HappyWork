@@ -85,7 +85,7 @@ stateDiagram-v2
     interrupted --> cancelled: 放弃
 ```
 
-- **单 goroutine 串行推进**：每个会话一个 Actor goroutine；状态只在该 goroutine 内迁移。`Submit/Resume/Discard` 经命令通道；`Approve/Deny` 经审批通道，在 `runTurn` 的 `select` 中被消费，不阻塞取消。
+- **单 goroutine 串行推进**：每个会话一个 Actor goroutine；状态只在该 goroutine 内迁移。`Submit/Resume/Discard` 经命令通道；暂停态的 `Resume` 直接唤醒 Actor 内等待的 `select`（保证审批/预算暂停可即时继续）；`Approve/Deny` 经审批通道，在同一个 `select` 中被消费，不阻塞取消。
 - **取消是唯一例外**：`Cancel()` 直接触发会话 ctx（互斥保护），不排队——否则取消会卡在审批等待后面，违背"取消即时生效"。取消后工具子进程终止、MCP 调用发 `notifications/cancelled`，transcript 记 `cancelled`。
 - **重入拒绝**：`Submit` 用原子运行标志拒绝并发提交（`ErrBusy`），不引入全局锁。
 - **审批决策校验**：每个待审批请求带 `approvalID`；过期/未知 ID 返回 `ErrStaleApproval`；同一请求只接受一次决策。
@@ -151,7 +151,7 @@ stateDiagram-v2
 7. 执行前比较参数快照；不等 → `ErrArgsDrift`。执行（内置工具直接调用；MCP 走客户端，60 秒超时）。
 8. 结果 > 256 KiB → 写附件（`attachments/<session>/<sha256>.txt`），回喂摘要 + hash + 路径；否则原样回喂。写 `messages(trust)`、`tool_calls` 终态、`events`。
 
-工具执行严格串行；模型一次返回多个 call 时按顺序逐个审批/执行。
+工具执行严格串行；模型一次返回多个 call 时按顺序逐个审批/执行。取消/预算耗尽时，未得到结果的 call 补一条 `{"error":"操作已取消，结果未知"}`，保证 transcript 始终是合法的 provider 历史。
 
 ### 6.2 工具定义
 
@@ -161,7 +161,7 @@ stateDiagram-v2
 | `builtin://list_dir` | `path`（可选，默认 `.`） | 仅工作区内；返回 `name/type/size`，排序，最多 1000 项；不递归；不跟随目录符号链接（规范化已拒绝逃逸） |
 | `builtin://write_file` | `path`, `content` | 仅工作区内；文本（拒绝 NUL）；≤2 MiB；父目录必须存在；临时文件 + fsync + 原子 rename；覆盖前复制到 `backups/<session>/<相对路径>`；保留原文件权限位；审批前生成内容预览（§5.3） |
 
-`ToolMeta` 增加 `Action`（read/write/execute/delete/network）、`Source`（builtin/mcp:name）、`Trust`（trusted/untrusted）。映射表仍以 `tool_ref` 为键。
+`ToolMeta` 增加 `Action`（read/write/execute/delete/network/unknown，MCP 默认 unknown）、`Source`（builtin/mcp:name）、`Trust`（trusted/untrusted）、`Destructive`（仅 MCP 配置可置位）。映射表仍以 `tool_ref` 为键。
 
 ### 6.3 工作区边界
 
@@ -272,11 +272,11 @@ AppInfo() (AppInfo, error)                           // provider/model/mock
 
 | 事件 | payload | 说明 |
 |---|---|---|
-| `approval:request` | approvalID, sessionID, toolCallID, toolName, toolRef, level, title, summary, fields[], scopeOptions[], source, reversible, expiresAt | 弹窗数据；不含 hash |
+| `approval:request` | approvalID, sessionID, toolCallID, toolName, toolRef, level, title, summary, fields[], preview, scopeOptions[], source, reversible, expiresAt | 弹窗数据；preview 为写入内容前 40 行/4 KiB；不含 hash |
 | `approval:resolved` | approvalID, decision, scope | 决策生效 |
 | `session:paused` | sessionID, reason(`approval_timeout`\|`budget`), detail | 暂停横幅 |
 | `session:notice` | sessionID, level(info/warn/error), text | 可见错误/提示（补 Phase 1 只写日志的缺口） |
-| `session:usage` | sessionID, model, turnTokens, totalTokens, costUSD, estimated | 每轮结束 |
+| `session:usage` | sessionID, model, turnTokens, totalTokens, costUSD（会话累计）, estimated | 每轮结束 |
 | `session:tool` | 追加 toolCallID, toolRef, trust, argsSummary | 工具块 |
 | `session:done` | 追加 detail | 终止原因可见 |
 
@@ -292,7 +292,7 @@ AppInfo() (AppInfo, error)                           // provider/model/mock
 | MaxWallClock | 30 分钟 / 次提交 | 可注入时钟 |
 | MaxCostUSD | $2.00 / 会话 | flash 单价折算；模型切换按配置价表 |
 
-超限 → `paused`（reason=budget），横幅提供"继续（一次宽限：+10 轮 / +10 分钟 / +500k tokens / +$0.50）"或"停止"。同一预算项第二次超限 → `error`，不静默截断。费用与 token 每轮发 `session:usage`。
+超限 → `paused`（reason=budget），横幅提供"继续（一次宽限：+10 轮 / +10 次工具调用 / +10 分钟 / +500k tokens / +$0.50）"或"停止"。同一预算项第二次超限 → `error`，不静默截断。费用与 token 每轮发 `session:usage`（totalTokens 与 costUSD 均为会话累计）。
 
 ## 11. 崩溃恢复
 
@@ -309,9 +309,11 @@ AppInfo() (AppInfo, error)                           // provider/model/mock
 
 ```
 default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';
-img-src 'self' data:; font-src 'self'; connect-src 'self' ipc://* http://ipc.localhost;
+img-src 'self' data:; font-src 'self'; connect-src 'self' ipc://* http://ipc.localhost wails:;
 frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'
 ```
+
+- `wails:` 为 v3.0.0 实测保留的 IPC 方案；`check-render-safety.sh` 校验上述指令齐全，收窄需真机回归。
 
 - **来源标记**：MCP 工具块与内容带 `data-trust="untrusted"` + 文案徽章；内置工具结果不标。transcript 重载从 `messages.trust` 恢复。
 - **二进制/附件**：图片、音频、资源链接只显示类型/大小/hash 占位；附件与备份不自动加载、不在 WebView 内打开。
@@ -341,7 +343,7 @@ frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'
 
 | 验收 | 实现与验证 |
 |---|---|
-| A1 | DeepSeek 客户端 + 真机会话（AI 自跑）；key 检索阴性；费用写入报告 |
+| A1 | DeepSeek 客户端 + 真机会话（AI 自跑，`-tags manual` 的 `TestDeepSeekLive` 与真机 UI）；key 检索阴性；费用写入报告 |
 | A2 | ApprovalDialog + Actor 审批通道 + approvals 表；单测覆盖四选项/超时/过期 |
 | A3 | write_file 备份/原子写/边界/敏感硬拒；故障注入测试 |
 | A4 | MCP 客户端 + Go 测试 server；重启上限；UI 徽章 |

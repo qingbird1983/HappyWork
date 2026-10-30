@@ -46,6 +46,18 @@ func (r *recordingEmitter) count(name string) int {
 	return n
 }
 
+func (r *recordingEmitter) all(name string) []any {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []any
+	for _, e := range r.events {
+		if e.name == name {
+			out = append(out, e.payload)
+		}
+	}
+	return out
+}
+
 // fakeProvider plays a sequence of phase scripts: Stream call N plays phase
 // min(N, len-1). The last phase repeats, which is how the max-turns test
 // builds an endless tool-call loop.
@@ -121,7 +133,7 @@ func newFixture(t *testing.T) *fixture {
 
 	em := &recordingEmitter{}
 	prov := &fakeProvider{}
-	mgr := NewManager(store, prov, em, log.New(os.Stderr, "test ", 0))
+	mgr := NewManager(store, prov, em, log.New(os.Stderr, "test ", 0), Options{DataDir: dir})
 	return &fixture{mgr: mgr, emitter: em, store: store, root: root, prov: prov}
 }
 
@@ -156,6 +168,18 @@ func waitTerminal(t *testing.T, f *fixture, s *Session) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("session did not reach a terminal state, state=%s", s.State())
+}
+
+func waitState(t *testing.T, s *Session, want string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if s.State() == want {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("session did not reach state %s, state=%s", want, s.State())
 }
 
 func TestSimpleTextTurn(t *testing.T) {
@@ -301,6 +325,9 @@ func TestCancelMidStream(t *testing.T) {
 	for time.Now().Before(deadline) && s.State() != StateThinking {
 		time.Sleep(2 * time.Millisecond)
 	}
+	for time.Now().Before(deadline) && f.prov.calls < 1 {
+		time.Sleep(2 * time.Millisecond)
+	}
 	s.Cancel()
 	waitTerminal(t, f, s)
 
@@ -338,6 +365,8 @@ func TestSendBusy(t *testing.T) {
 
 func TestMaxTurnsExhausted(t *testing.T) {
 	f := newFixture(t)
+	f.mgr.budget.MaxTurns = 2
+	f.mgr.budget.GraceTurns = 0
 	s := f.newSession(t)
 	args, _ := json.Marshal(map[string]string{"path": "in.txt"})
 	f.prov.setScript([]model.Chunk{
@@ -345,8 +374,14 @@ func TestMaxTurnsExhausted(t *testing.T) {
 		{Done: true},
 	})
 
-	f.runSend(t, s, "循环调用")
-
+	if err := s.Send(context.Background(), "循环调用"); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	waitState(t, s, StatePaused)
+	if err := s.Resume(context.Background()); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	waitTerminal(t, f, s)
 	if s.State() != StateError {
 		t.Fatalf("state = %s, want error", s.State())
 	}
@@ -355,10 +390,13 @@ func TestMaxTurnsExhausted(t *testing.T) {
 func TestUnknownToolReportedToModel(t *testing.T) {
 	f := newFixture(t)
 	s := f.newSession(t)
-	f.prov.setScript([]model.Chunk{
-		{ToolCall: &model.ToolCall{ID: "u1", Name: "delete_everything", Arguments: json.RawMessage(`{}`)}},
-		{Done: true},
-	})
+	f.prov.setPhases(
+		[]model.Chunk{
+			{ToolCall: &model.ToolCall{ID: "u1", Name: "delete_everything", Arguments: json.RawMessage(`{}`)}},
+			{Done: true},
+		},
+		[]model.Chunk{{Delta: "删不了。"}, {Done: true}},
+	)
 
 	f.runSend(t, s, "删库")
 

@@ -3,11 +3,9 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	"github.com/happywork/happywork/internal/model"
 	"github.com/happywork/happywork/internal/storage"
@@ -15,17 +13,63 @@ import (
 	"github.com/happywork/happywork/internal/workspace"
 )
 
-// Session drives one conversation: the deterministic turn loop. Send is
-// serialized per session; Cancel is safe from any goroutine.
+// Command kinds for the session actor.
+const (
+	cmdSubmit            = "submit"
+	cmdResumeInterrupted = "resume_interrupted"
+	cmdDiscard           = "discard"
+)
+
+type command struct {
+	kind  string
+	text  string
+	ctx   context.Context
+	reply chan error
+}
+
+// Session drives one conversation. A single actor goroutine serializes state
+// transitions; Cancel is the one direct entry point (design.md §4).
 type Session struct {
 	mgr   *Manager
 	info  storage.Session
+	root  workspace.Root
 	tools *tool.Registry
 
-	mu      sync.Mutex
-	running atomic.Bool
-	cancel  context.CancelFunc
-	state   string
+	mu                  sync.Mutex
+	state               string
+	cancel              context.CancelFunc
+	running             bool
+	starting            bool
+	pending             *pendingApproval
+	pendingAllowSession bool
+
+	cmds      chan command
+	approvals chan approvalDecision
+	resumeCh  chan struct{}
+
+	clock  Clock
+	budget *budgetState
+}
+
+func newSession(mgr *Manager, info storage.Session, root workspace.Root, reg *tool.Registry) *Session {
+	state := info.State
+	if state == "" {
+		state = StateIdle
+	}
+	s := &Session{
+		mgr:       mgr,
+		info:      info,
+		root:      root,
+		tools:     reg,
+		state:     state,
+		cmds:      make(chan command, 1),
+		approvals: make(chan approvalDecision, 4),
+		resumeCh:  make(chan struct{}, 1),
+		clock:     mgr.clock,
+		budget:    newBudgetState(mgr.budget, mgr.clock),
+	}
+	go s.loop()
+	return s
 }
 
 // ID returns the session identifier.
@@ -35,9 +79,6 @@ func (s *Session) ID() string { return s.info.ID }
 func (s *Session) State() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.state == "" {
-		return s.info.State
-	}
 	return s.state
 }
 
@@ -48,35 +89,22 @@ func (s *Session) Info() storage.Session {
 	return s.info
 }
 
-// Send submits one user message and runs turns until the model stops calling
-// tools. It returns immediately; the run continues in its own goroutine and
-// reports progress through events. Re-entrant sends fail with ErrBusy.
+// Send submits one user message. It returns after the actor starts the run;
+// progress arrives through events. Paused/interrupted sessions must be
+// resumed (or discarded) instead.
 func (s *Session) Send(ctx context.Context, text string) error {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return fmt.Errorf("agent: empty message")
 	}
-	if !s.running.CompareAndSwap(false, true) {
-		return ErrBusy
+	if err := s.enqueueStart(cmdSubmit, ctx, text); err != nil {
+		return err
 	}
-
-	runCtx, cancel := context.WithCancel(ctx)
-	s.mu.Lock()
-	s.cancel = cancel
-	s.mu.Unlock()
-
-	go func() {
-		defer func() {
-			cancel()
-			s.running.Store(false)
-		}()
-		s.run(runCtx, text)
-	}()
 	return nil
 }
 
-// Cancel aborts the in-flight run; the loop exits at its next checkpoint and
-// the session transitions to cancelled. No-op when idle.
+// Cancel aborts the in-flight run (including approval waits and pauses). It
+// does not queue behind the actor: cancellation must be immediate.
 func (s *Session) Cancel() {
 	s.mu.Lock()
 	cancel := s.cancel
@@ -86,11 +114,86 @@ func (s *Session) Cancel() {
 	}
 }
 
+// enqueueStart claims the session and hands a start command to the actor.
+func (s *Session) enqueueStart(kind string, ctx context.Context, text string) error {
+	s.mu.Lock()
+	if s.running || s.starting {
+		s.mu.Unlock()
+		return ErrBusy
+	}
+	if s.state == StatePaused {
+		s.mu.Unlock()
+		return ErrNotResumable
+	}
+	if kind == cmdResumeInterrupted {
+		if s.state != StateInterrupted {
+			s.mu.Unlock()
+			return ErrNotResumable
+		}
+	} else if s.state == StateInterrupted {
+		s.mu.Unlock()
+		return ErrNotResumable
+	}
+	s.starting = true
+	s.mu.Unlock()
+
+	reply := make(chan error, 1)
+	cmd := command{kind: kind, text: text, ctx: ctx, reply: reply}
+	select {
+	case s.cmds <- cmd:
+	case <-ctx.Done():
+		s.mu.Lock()
+		s.starting = false
+		s.mu.Unlock()
+		return ctx.Err()
+	}
+	return <-reply
+}
+
+// loop is the actor; it never runs two turns at once.
+func (s *Session) loop() {
+	for cmd := range s.cmds {
+		switch cmd.kind {
+		case cmdSubmit, cmdResumeInterrupted:
+			runCtx, cancel := context.WithCancel(cmd.ctx)
+			s.mu.Lock()
+			s.running = true
+			s.starting = false
+			s.cancel = cancel
+			s.mu.Unlock()
+			s.budget.resetRun()
+			cmd.reply <- nil
+
+			if cmd.kind == cmdResumeInterrupted {
+				s.injectUnknownResults(runCtx)
+			}
+			s.run(runCtx, cmd.text, cmd.kind == cmdResumeInterrupted)
+			cancel()
+			s.mu.Lock()
+			s.running = false
+			s.cancel = nil
+			s.mu.Unlock()
+		case cmdDiscard:
+			s.mu.Lock()
+			s.starting = false
+			s.mu.Unlock()
+			s.setState(StateCancelled)
+			s.mgr.emitEvent(s.info.ID, EventDone, DonePayload{SessionID: s.info.ID, FinalState: StateCancelled, Detail: "用户放弃继续"})
+			cmd.reply <- nil
+		}
+	}
+}
+
 // setState persists and broadcasts a state transition.
 func (s *Session) setState(state string) {
 	s.mu.Lock()
 	s.state = state
 	s.info.State = state
+	if terminal(state) {
+		// A terminal state ends the run; allow an immediate next Submit even
+		// while the actor is still emitting the final events.
+		s.running = false
+	}
 	s.mu.Unlock()
 	if err := s.mgr.store.UpdateSessionState(context.Background(), s.info.ID, state); err != nil {
 		s.mgr.log.Printf("agent: persist state %s: %v", state, err)
@@ -117,50 +220,82 @@ func (s *Session) history(ctx context.Context) ([]model.Message, error) {
 	return out, nil
 }
 
-// run executes the turn loop for one user message.
-func (s *Session) run(ctx context.Context, text string) {
+// run executes the turn loop. resume skips the user-message append (recovery
+// continue) but otherwise behaves identically.
+func (s *Session) run(ctx context.Context, userText string, resume bool) {
 	bg := context.Background()
 	sessID := s.info.ID
 
-	// Persist the user message; the first one also names the session.
-	userMsg := storage.Message{ID: storage.NewID(), SessionID: sessID, Role: storage.RoleUser, Content: text}
-	if err := s.mgr.store.AppendMessage(bg, &userMsg); err != nil {
-		s.mgr.log.Printf("agent: persist user message: %v", err)
+	if !resume {
+		userMsg := storage.Message{ID: storage.NewID(), SessionID: sessID, Role: storage.RoleUser, Content: userText, TurnID: 1}
+		if err := s.mgr.store.AppendMessage(bg, &userMsg); err != nil {
+			s.mgr.log.Printf("agent: persist user message: %v", err)
+		}
+		s.mu.Lock()
+		title := s.info.Title
+		s.mu.Unlock()
+		if title == "新会话" {
+			_ = s.mgr.store.UpdateSessionTitle(bg, sessID, truncateTitle(userText))
+			s.mu.Lock()
+			s.info.Title = truncateTitle(userText)
+			s.mu.Unlock()
+		}
 	}
-	info := s.Info()
-	if info.Title == "新会话" {
-		_ = s.mgr.store.UpdateSessionTitle(bg, sessID, truncateTitle(text))
-	}
-
 	s.setState(StateThinking)
 
-	for turn := 1; turn <= MaxTurns; turn++ {
+	for {
+		if err := ctx.Err(); err != nil {
+			s.finish(StateCancelled, "")
+			return
+		}
+		if err := s.checkWallClock(ctx); err != nil {
+			s.finishRunErr(ctx, err)
+			return
+		}
+		if s.budget.turns >= s.turnLimit() {
+			if s.budget.gracedTurns {
+				s.finish(StateError, ErrBudgetExhausted.Error())
+				return
+			}
+			if err := s.pauseForBudget(ctx, budgetTurns, "轮次上限已到"); err != nil {
+				s.finishRunErr(ctx, err)
+				return
+			}
+			continue
+		}
+		s.budget.turns++
+		turnID := int64(s.budget.turns)
+
 		hist, err := s.history(bg)
 		if err != nil {
 			s.finish(StateError, fmt.Sprintf("load history: %v", err))
 			return
 		}
 
-		assistText, calls, err := s.streamTurn(ctx, hist)
+		assistText, calls, usage, err := s.streamTurn(ctx, hist)
 		if err != nil {
-			// Keep whatever partial text was already streamed (design.md §6).
 			if assistText != "" {
 				partial := storage.Message{
 					ID: storage.NewID(), SessionID: sessID,
-					Role: storage.RoleAssistant, Content: assistText,
+					Role: storage.RoleAssistant, Content: assistText, TurnID: turnID,
 				}
 				if appendErr := s.mgr.store.AppendMessage(bg, &partial); appendErr != nil {
 					s.mgr.log.Printf("agent: persist partial message: %v", appendErr)
 				}
 			}
-			s.finish(s.stateForErr(ctx), err.Error())
+			s.finishRunErr(ctx, err)
+			return
+		}
+
+		if err := s.recordUsage(ctx, hist, assistText, usage); err != nil {
+			s.finishRunErr(ctx, err)
 			return
 		}
 
 		if assistText != "" {
 			am := storage.Message{
 				ID: storage.NewID(), SessionID: sessID,
-				Role: storage.RoleAssistant, Content: assistText,
+				Role: storage.RoleAssistant, Content: assistText, TurnID: turnID,
 			}
 			if len(calls) > 0 {
 				am.ToolCallsJSON = storage.MustJSON(calls)
@@ -178,39 +313,52 @@ func (s *Session) run(ctx context.Context, text string) {
 			s.finish(StateCancelled, "")
 			return
 		}
-		if turn == MaxTurns {
-			s.finish(StateError, "max turns reached")
-			return
-		}
 
-		results := s.execCalls(ctx, calls)
-		if ctx.Err() != nil {
-			s.finish(StateCancelled, "")
-			return
-		}
+		results, execErr := s.execCalls(ctx, calls, turnID)
+		s.setState(StatePersisting)
 		for _, r := range results {
 			tm := storage.Message{
 				ID: storage.NewID(), SessionID: sessID,
 				Role: storage.RoleTool, Content: r.content,
-				ToolCallID: r.callID, ToolName: r.name,
+				ToolCallID: r.callID, ToolName: r.name, TurnID: turnID,
+			}
+			if r.trust == storage.TrustUntrusted {
+				tm.Trust = storage.TrustUntrusted
 			}
 			if err := s.mgr.store.AppendMessage(bg, &tm); err != nil {
 				s.mgr.log.Printf("agent: persist tool message: %v", err)
 			}
 		}
+		if execErr != nil {
+			s.finishRunErr(ctx, execErr)
+			return
+		}
+		if ctx.Err() != nil {
+			s.finish(StateCancelled, "")
+			return
+		}
 		s.setState(StateThinking)
 	}
 }
 
-// streamTurn streams one provider turn. It returns the accumulated text and
-// any tool calls requested by the model.
-func (s *Session) streamTurn(ctx context.Context, hist []model.Message) (string, []model.ToolCall, error) {
+func (s *Session) finishRunErr(ctx context.Context, err error) {
+	if ctx.Err() != nil {
+		s.finish(StateCancelled, "")
+		return
+	}
+	s.finish(StateError, err.Error())
+}
+
+// streamTurn streams one provider turn. It returns the accumulated text, tool
+// calls and provider usage (nil when the mock provider omits it).
+func (s *Session) streamTurn(ctx context.Context, hist []model.Message) (string, []model.ToolCall, *model.Usage, error) {
 	sessID := s.info.ID
 	ch := s.mgr.prov.Stream(ctx, hist, s.tools.Specs())
 
 	var (
 		text    strings.Builder
 		calls   []model.ToolCall
+		usage   *model.Usage
 		batcher = newDeltaBatcher(func(joined string) {
 			s.mgr.emitEvent(sessID, EventDelta, DeltaPayload{SessionID: sessID, Text: joined})
 		})
@@ -219,17 +367,20 @@ func (s *Session) streamTurn(ctx context.Context, hist []model.Message) (string,
 	for chunk := range ch {
 		if err := ctx.Err(); err != nil {
 			batcher.flush()
-			return text.String(), calls, err
+			return text.String(), calls, usage, err
 		}
 		switch {
 		case chunk.Err != nil:
 			batcher.flush()
-			return text.String(), calls, chunk.Err
+			return text.String(), calls, usage, chunk.Err
 		case chunk.Done:
 			batcher.flush()
-			return text.String(), calls, nil
+			if chunk.Usage != nil {
+				usage = chunk.Usage
+			}
+			return text.String(), calls, usage, nil
 		case chunk.ToolCall != nil:
-			batcher.flush() // tool boundary: emit what we have
+			batcher.flush()
 			calls = append(calls, *chunk.ToolCall)
 			s.setState(StateRunningTool)
 		default:
@@ -237,83 +388,121 @@ func (s *Session) streamTurn(ctx context.Context, hist []model.Message) (string,
 			batcher.add(chunk.Delta)
 		}
 	}
-	// The provider closed the channel; if that was caused by cancellation
-	// (rather than a Done chunk), surface it so the run lands on cancelled.
 	if err := ctx.Err(); err != nil {
 		batcher.flush()
-		return text.String(), calls, err
+		return text.String(), calls, usage, err
 	}
 	batcher.flush()
-	return text.String(), calls, nil
+	return text.String(), calls, usage, nil
 }
 
-// toolResult carries one executed call back into the transcript.
-type toolResult struct {
-	callID  string
-	name    string
-	content string
-}
-
-// execCalls runs each requested tool call, persisting tool_calls rows and
-// audit entries for boundary denials (A5).
-func (s *Session) execCalls(ctx context.Context, calls []model.ToolCall) []toolResult {
-	sessID := s.info.ID
-	out := make([]toolResult, 0, len(calls))
-
-	for _, call := range calls {
-		if ctx.Err() != nil {
-			return out
-		}
-		s.mgr.emitEvent(sessID, EventTool, ToolPayload{SessionID: sessID, Name: call.Name, Status: "running"})
-
-		record := storage.ToolCallRecord{
-			ID: storage.NewID(), SessionID: sessID,
-			Name: call.Name, ArgsJSON: string(call.Arguments),
-			Status: "running",
-		}
-		if err := s.mgr.store.AppendToolCall(ctx, &record); err != nil {
-			s.mgr.log.Printf("agent: persist tool call: %v", err)
-		}
-
-		resultJSON, status := s.execOne(ctx, call, record.ID)
-
-		if err := s.mgr.store.UpdateToolCallResult(ctx, record.ID, resultJSON, status); err != nil {
-			s.mgr.log.Printf("agent: persist tool result: %v", err)
-		}
-		s.mgr.emitEvent(sessID, EventTool, ToolPayload{SessionID: sessID, Name: call.Name, Status: status})
-		out = append(out, toolResult{callID: call.ID, name: call.Name, content: resultJSON})
+func (s *Session) recordUsage(ctx context.Context, hist []model.Message, completion string, usage *model.Usage) error {
+	estimated := usage == nil
+	promptChars := 0
+	for _, m := range hist {
+		promptChars += len(m.Content)
 	}
-	return out
+	if usage == nil {
+		usage = &model.Usage{}
+	}
+	turnTokens, _ := s.budget.addUsage(*usage, estimated, s.mgr.modelName(), promptChars, len(completion))
+	s.mgr.emitEvent(s.info.ID, EventUsage, UsagePayload{
+		SessionID:   s.info.ID,
+		Model:       s.mgr.modelName(),
+		TurnTokens:  turnTokens,
+		TotalTokens: int(s.budget.tokens),
+		CostUSD:     s.budget.cost,
+		Estimated:   estimated,
+	})
+	// Token/cost limits are session scoped; exceeding them pauses the run.
+	if s.budget.tokens > s.tokenLimit() {
+		if s.budget.gracedTokens {
+			return ErrBudgetExhausted
+		}
+		if err := s.pauseForBudget(ctx, budgetTokens, fmt.Sprintf("token 用量 %d 超过上限", s.budget.tokens)); err != nil {
+			return err
+		}
+	}
+	if s.budget.cost > s.costLimit() {
+		if s.budget.gracedCost {
+			return ErrBudgetExhausted
+		}
+		if err := s.pauseForBudget(ctx, budgetCost, fmt.Sprintf("费用 $%.4f 超过上限", s.budget.cost)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-// execOne runs a single call and returns (resultJSON, status).
-func (s *Session) execOne(ctx context.Context, call model.ToolCall, recordID string) (string, string) {
-	t, ok := s.tools.Get(call.Name)
-	if !ok {
-		return storage.MustJSON(map[string]string{"error": fmt.Sprintf("unknown tool %q", call.Name)}), "failed"
+func (s *Session) checkWallClock(ctx context.Context) error {
+	limit := s.budget.cfg.MaxWallClock + s.budget.wallLimitAdd
+	if limit <= 0 {
+		return nil
 	}
+	if s.budget.clock.Now().Sub(s.budget.runStart) <= limit {
+		return nil
+	}
+	if s.budget.gracedWall {
+		return ErrBudgetExhausted
+	}
+	return s.pauseForBudget(ctx, budgetWallClock, "本次运行时长超过上限")
+}
 
-	result, err := t.Exec(ctx, call.Arguments)
-	if err != nil {
-		status := "failed"
-		if errors.Is(err, workspace.ErrOutsideWorkspace) {
-			// A5: boundary denials leave an audit trail before the model sees them.
-			if aerr := s.mgr.store.AppendAudit(ctx, s.info.ID, call.Name, "deny", err.Error()); aerr != nil {
-				s.mgr.log.Printf("agent: persist audit: %v", aerr)
+// pauseForBudget parks the actor on a budget pause. Resume applies one grace
+// unless the item was already graced, in which case the run fails.
+func (s *Session) pauseForBudget(ctx context.Context, item budgetItem, detail string) error {
+	s.setState(StatePaused)
+	s.mgr.emitEvent(s.info.ID, EventPaused, PausedPayload{SessionID: s.info.ID, Reason: "budget", Detail: detail})
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-s.resumeCh:
+			switch item {
+			case budgetTurns:
+				if s.budget.gracedTurns {
+					return ErrBudgetExhausted
+				}
+				s.budget.gracedTurns = true
+				s.budget.turnLimitAdd += s.budget.cfg.GraceTurns
+			case budgetWallClock:
+				if s.budget.gracedWall {
+					return ErrBudgetExhausted
+				}
+				s.budget.gracedWall = true
+				s.budget.wallLimitAdd += s.budget.cfg.GraceWallClock
+			case budgetTokens:
+				if s.budget.gracedTokens {
+					return ErrBudgetExhausted
+				}
+				s.budget.gracedTokens = true
+				s.budget.tokenLimitAdd += s.budget.cfg.GraceTokens
+			case budgetCost:
+				if s.budget.gracedCost {
+					return ErrBudgetExhausted
+				}
+				s.budget.gracedCost = true
+				s.budget.costLimitAdd += s.budget.cfg.GraceCostUSD
+			case budgetToolCalls:
+				if s.budget.gracedToolCalls {
+					return ErrBudgetExhausted
+				}
+				s.budget.gracedToolCalls = true
+				s.budget.toolLimitAdd += s.budget.cfg.GraceToolCalls
 			}
+			s.setState(StateThinking)
+			return nil
 		}
-		return storage.MustJSON(map[string]string{"error": err.Error()}), status
 	}
-	return storage.MustJSON(result), "ok"
 }
 
-// stateForErr maps a loop error to the terminal state (cancelled keeps its
-// own state; everything else is error).
-func (s *Session) stateForErr(ctx context.Context) string {
-	if ctx.Err() != nil {
-		return StateCancelled
-	}
-	return StateError
+func (s *Session) turnLimit() int     { return s.budget.cfg.MaxTurns + s.budget.turnLimitAdd }
+func (s *Session) toolLimit() int     { return s.budget.cfg.MaxToolCalls + s.budget.toolLimitAdd }
+func (s *Session) tokenLimit() int64  { return s.budget.cfg.MaxTokens + s.budget.tokenLimitAdd }
+func (s *Session) costLimit() float64 { return s.budget.cfg.MaxCostUSD + s.budget.costLimitAdd }
+
+func (s *Session) notice(level, text string) {
+	s.mgr.emitEvent(s.info.ID, EventNotice, NoticePayload{SessionID: s.info.ID, Level: level, Text: text})
 }
 
 // finish lands on a terminal state and emits done.
@@ -322,7 +511,26 @@ func (s *Session) finish(state, detail string) {
 	if detail != "" {
 		s.mgr.log.Printf("agent: session %s finished %s: %s", s.info.ID, state, detail)
 	}
-	s.mgr.emitEvent(s.info.ID, EventDone, DonePayload{SessionID: s.info.ID, FinalState: state})
+	if state == StateError && detail != "" {
+		s.notice("error", detail)
+	}
+	s.mgr.emitEvent(s.info.ID, EventDone, DonePayload{SessionID: s.info.ID, FinalState: state, Detail: detail})
+}
+
+func requiresPath(ref string) bool {
+	switch ref {
+	case "builtin://read_file", "builtin://write_file", "builtin://list_dir":
+		return true
+	}
+	return false
+}
+
+// truncateForDisplay shortens raw arguments for the UI.
+func truncateForDisplay(s string) string {
+	if len(s) > 200 {
+		return strings.ToValidUTF8(s[:200], "") + "…"
+	}
+	return s
 }
 
 // truncateTitle derives the session title from the first user message.

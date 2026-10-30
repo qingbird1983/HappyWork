@@ -43,6 +43,7 @@ docs/
 | design/phase-1/report.md | 定稿 | Phase 1 验收报告：A1~A7 逐条证据、偏差与遗留、缺陷修复记录 |
 | design/phase-2/design.md | 定稿 | Phase 2 施工设计：Actor 状态机、审批、工具管道、DeepSeek、迁移、预算、恢复、渲染安全 |
 | design/phase-2/mcp.md | 定稿 | Phase 2 MCP stdio 设计：双代协议、配置、生命周期、schema 白名单、安全与测试 |
+| design/phase-2/report.md | 待签收 | Phase 2 验收报告：A1~A8 逐条证据、费用披露、偏差与缺陷 |
 | standards/01 ~ 09 | 定稿 | 仓库结构 / git 工作流 / 文档 / 代码 / 测试 / 安全 / AI 协作 / 体量 / 规范复查（01/04/05 已按本项目回填） |
 | glossary.md | 草稿 | 术语表（面向非技术读者） |
 | research/01-v2-design-review.md | 定稿 | v2 设计简报评审：4 类发现与外部事实核实，V3 修订依据 |

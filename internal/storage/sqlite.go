@@ -100,14 +100,14 @@ func (s *sqliteStore) CreateSession(ctx context.Context, sess *Session) error {
 		sess.State = "idle"
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO sessions (id, title, workspace_root, state, created_at, updated_at) VALUES (?,?,?,?,?,?)`,
-		sess.ID, sess.Title, sess.WorkspaceRoot, sess.State, sess.CreatedAt, sess.UpdatedAt)
+		`INSERT INTO sessions (id, title, workspace_root, model_id, state, created_at, updated_at) VALUES (?,?,?,?,?,?,?)`,
+		sess.ID, sess.Title, sess.WorkspaceRoot, sess.ModelID, sess.State, sess.CreatedAt, sess.UpdatedAt)
 	return err
 }
 
 func (s *sqliteStore) ListSessions(ctx context.Context) ([]Session, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, title, workspace_root, state, created_at, updated_at FROM sessions ORDER BY updated_at DESC`)
+		`SELECT id, title, workspace_root, model_id, state, created_at, updated_at FROM sessions ORDER BY updated_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +115,7 @@ func (s *sqliteStore) ListSessions(ctx context.Context) ([]Session, error) {
 	var out []Session
 	for rows.Next() {
 		var sess Session
-		if err := rows.Scan(&sess.ID, &sess.Title, &sess.WorkspaceRoot, &sess.State, &sess.CreatedAt, &sess.UpdatedAt); err != nil {
+		if err := rows.Scan(&sess.ID, &sess.Title, &sess.WorkspaceRoot, &sess.ModelID, &sess.State, &sess.CreatedAt, &sess.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, sess)
@@ -126,8 +126,8 @@ func (s *sqliteStore) ListSessions(ctx context.Context) ([]Session, error) {
 func (s *sqliteStore) GetSession(ctx context.Context, id string) (Session, error) {
 	var sess Session
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, title, workspace_root, state, created_at, updated_at FROM sessions WHERE id = ?`, id).
-		Scan(&sess.ID, &sess.Title, &sess.WorkspaceRoot, &sess.State, &sess.CreatedAt, &sess.UpdatedAt)
+		`SELECT id, title, workspace_root, model_id, state, created_at, updated_at FROM sessions WHERE id = ?`, id).
+		Scan(&sess.ID, &sess.Title, &sess.WorkspaceRoot, &sess.ModelID, &sess.State, &sess.CreatedAt, &sess.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return sess, fmt.Errorf("storage: session %s: %w", id, ErrNotFound)
 	}
@@ -170,15 +170,18 @@ func (s *sqliteStore) AppendMessage(ctx context.Context, m *Message) error {
 	if m.CreatedAt == "" {
 		m.CreatedAt = Now()
 	}
+	if m.Trust == "" {
+		m.Trust = TrustTrusted
+	}
 	seq, err := s.NextSeq(ctx, m.SessionID)
 	if err != nil {
 		return err
 	}
 	m.Seq = seq
 	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO messages (id, session_id, seq, role, content, tool_call_id, tool_name, tool_calls_json, created_at)
-		 VALUES (?,?,?,?,?,?,?,?,?)`,
-		m.ID, m.SessionID, m.Seq, m.Role, m.Content, m.ToolCallID, m.ToolName, m.ToolCallsJSON, m.CreatedAt)
+		`INSERT INTO messages (id, session_id, seq, role, content, tool_call_id, tool_name, tool_calls_json, turn_id, trust, created_at)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+		m.ID, m.SessionID, m.Seq, m.Role, m.Content, m.ToolCallID, m.ToolName, m.ToolCallsJSON, m.TurnID, m.Trust, m.CreatedAt)
 	if err != nil {
 		return err
 	}
@@ -187,7 +190,7 @@ func (s *sqliteStore) AppendMessage(ctx context.Context, m *Message) error {
 
 func (s *sqliteStore) Transcript(ctx context.Context, sessionID string) ([]Message, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, session_id, seq, role, content, tool_call_id, tool_name, tool_calls_json, created_at
+		`SELECT id, session_id, seq, role, content, tool_call_id, tool_name, tool_calls_json, turn_id, trust, created_at
 		 FROM messages WHERE session_id = ? ORDER BY seq`, sessionID)
 	if err != nil {
 		return nil, err
@@ -196,7 +199,7 @@ func (s *sqliteStore) Transcript(ctx context.Context, sessionID string) ([]Messa
 	var out []Message
 	for rows.Next() {
 		var m Message
-		if err := rows.Scan(&m.ID, &m.SessionID, &m.Seq, &m.Role, &m.Content, &m.ToolCallID, &m.ToolName, &m.ToolCallsJSON, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.SessionID, &m.Seq, &m.Role, &m.Content, &m.ToolCallID, &m.ToolName, &m.ToolCallsJSON, &m.TurnID, &m.Trust, &m.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, m)
@@ -215,9 +218,42 @@ func (s *sqliteStore) AppendToolCall(ctx context.Context, tc *ToolCallRecord) er
 		tc.Status = "running"
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO tool_calls (id, session_id, name, args_json, result_json, status, created_at) VALUES (?,?,?,?,?,?,?)`,
-		tc.ID, tc.SessionID, tc.Name, tc.ArgsJSON, tc.ResultJSON, tc.Status, tc.CreatedAt)
+		`INSERT INTO tool_calls (id, session_id, turn_id, name, tool_ref, match_key, risk, reversible, decision, args_json, result_json, status, created_at)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		tc.ID, tc.SessionID, tc.TurnID, tc.Name, tc.ToolRef, tc.MatchKey, tc.Risk, tc.Reversible, tc.Decision, tc.ArgsJSON, tc.ResultJSON, tc.Status, tc.CreatedAt)
 	return err
+}
+
+func (s *sqliteStore) AppendApproval(ctx context.Context, a *Approval) error {
+	if a.ID == "" {
+		a.ID = NewID()
+	}
+	if a.CreatedAt == "" {
+		a.CreatedAt = Now()
+	}
+	if a.DecidedAt == "" {
+		a.DecidedAt = a.CreatedAt
+	}
+	if a.DecidedBy == "" {
+		a.DecidedBy = "user"
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO approvals (id, session_id, turn_id, tool_call_id, tool_ref, match_key, level, decision, scope, args_json, note, decided_by, decided_at, created_at)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		a.ID, a.SessionID, a.TurnID, a.ToolCallID, a.ToolRef, a.MatchKey, a.Level, a.Decision, a.Scope, a.ArgsJSON, a.Note, a.DecidedBy, a.DecidedAt, a.CreatedAt)
+	return err
+}
+
+func (s *sqliteStore) HasSessionApproval(ctx context.Context, sessionID, matchKey string) (bool, error) {
+	if matchKey == "" {
+		return false, nil
+	}
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM approvals
+		 WHERE session_id = ? AND match_key = ? AND scope = 'session' AND decision = 'allow'`,
+		sessionID, matchKey).Scan(&n)
+	return n > 0, err
 }
 
 func (s *sqliteStore) UpdateToolCallResult(ctx context.Context, id, resultJSON, status string) error {
@@ -274,12 +310,23 @@ func (s *sqliteStore) KVSet(ctx context.Context, key, value string) error {
 	return err
 }
 
-// MarkInterruptedNonTerminal flips sessions stuck in a non-terminal state
-// (e.g. after a crash) to "interrupted". Phase 1 recovery placeholder.
+// MarkInterruptedNonTerminal flips sessions that were mid-run when the app
+// exited to "interrupted". Idle sessions have no run in flight and stay idle.
 func (s *sqliteStore) MarkInterruptedNonTerminal(ctx context.Context) (int64, error) {
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE sessions SET state = 'interrupted', updated_at = ?
-		 WHERE state NOT IN ('completed', 'error', 'cancelled', 'interrupted')`, Now())
+		 WHERE state IN ('thinking', 'running_tool', 'persisting', 'awaiting_approval', 'paused')`, Now())
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// MarkRunningToolCallsUnknown marks tool calls interrupted mid-flight. The
+// result is genuinely unknown: recovery must not claim success or failure.
+func (s *sqliteStore) MarkRunningToolCallsUnknown(ctx context.Context) (int64, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE tool_calls SET status = 'unknown' WHERE status = 'running'`)
 	if err != nil {
 		return 0, err
 	}

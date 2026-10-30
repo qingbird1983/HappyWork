@@ -5,12 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <!--
       Rendering-security baseline (A6): no inline/remote script; model output is
-      injected via textContent only. connect-src lists the Wails IPC bridges;
-      tighten per-platform in Phase 2 if a narrower set proves sufficient.
+      injected via React text nodes only. connect-src lists the Wails IPC
+      bridges; frame/object/base/form are disabled outright.
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' http://ipc.localhost ipc: wails:"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ipc://* http://ipc.localhost wails:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
     />
     <title>HappyWork</title>
   </head>

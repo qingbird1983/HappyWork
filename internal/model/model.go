@@ -39,14 +39,25 @@ type ToolSpec struct {
 	Parameters json.RawMessage `json:"parameters"`
 }
 
+// Usage is the provider-reported token accounting for one streamed turn.
+type Usage struct {
+	PromptTokens     int `json:"promptTokens"`
+	CompletionTokens int `json:"completionTokens"`
+	TotalTokens      int `json:"totalTokens"`
+	CacheHitTokens   int `json:"cacheHitTokens"`
+	CacheMissTokens  int `json:"cacheMissTokens"`
+	ReasoningTokens  int `json:"reasoningTokens"`
+}
+
 // Chunk is one streamed provider event. Exactly one field is meaningful per
 // chunk: Delta (text), ToolCall (a complete call; mock providers do not split
-// arguments), Done (terminal ok) or Err.
+// arguments), Done (terminal ok) or Err. Done may carry Usage.
 type Chunk struct {
 	Delta    string
 	ToolCall *ToolCall
 	Done     bool
 	Err      error
+	Usage    *Usage
 }
 
 // Provider streams one assistant turn. Implementations must close the channel

@@ -13,10 +13,17 @@ type Session struct {
 	ID            string `json:"id"`
 	Title         string `json:"title"`
 	WorkspaceRoot string `json:"workspaceRoot"`
+	ModelID       string `json:"modelId"`
 	State         string `json:"state"`
 	CreatedAt     string `json:"createdAt"`
 	UpdatedAt     string `json:"updatedAt"`
 }
+
+// Trust levels for transcript entries (messages.trust).
+const (
+	TrustTrusted   = "trusted"
+	TrustUntrusted = "untrusted"
+)
 
 // Message roles.
 const (
@@ -37,6 +44,8 @@ type Message struct {
 	ToolCallID    string `json:"toolCallId,omitempty"`
 	ToolName      string `json:"toolName,omitempty"`
 	ToolCallsJSON string `json:"toolCallsJson,omitempty"`
+	TurnID        int64  `json:"turnId"`
+	Trust         string `json:"trust"`
 	CreatedAt     string `json:"createdAt"`
 }
 
@@ -44,11 +53,36 @@ type Message struct {
 type ToolCallRecord struct {
 	ID         string
 	SessionID  string
+	TurnID     int64
 	Name       string
+	ToolRef    string
+	MatchKey   string
+	Risk       string
+	Reversible bool
+	Decision   string
 	ArgsJSON   string
 	ResultJSON string
 	Status     string
 	CreatedAt  string
+}
+
+// Approval is one decided approval request. Pending requests are in-memory only
+// (a crash drops them; recovery re-asks, see design.md §11).
+type Approval struct {
+	ID         string `json:"id"`
+	SessionID  string `json:"sessionId"`
+	TurnID     int64  `json:"turnId"`
+	ToolCallID string `json:"toolCallId"`
+	ToolRef    string `json:"toolRef"`
+	MatchKey   string `json:"matchKey"`
+	Level      string `json:"level"`
+	Decision   string `json:"decision"`
+	Scope      string `json:"scope"`
+	ArgsJSON   string `json:"argsJson"`
+	Note       string `json:"note"`
+	DecidedBy  string `json:"decidedBy"`
+	DecidedAt  string `json:"decidedAt"`
+	CreatedAt  string `json:"createdAt"`
 }
 
 // AuditEntry is one immutable audit row (A5 boundary denials; richer use in Phase 4).
@@ -75,6 +109,9 @@ type Store interface {
 	AppendToolCall(ctx context.Context, tc *ToolCallRecord) error
 	UpdateToolCallResult(ctx context.Context, id, resultJSON, status string) error
 
+	AppendApproval(ctx context.Context, a *Approval) error
+	HasSessionApproval(ctx context.Context, sessionID, matchKey string) (bool, error)
+
 	AppendEvent(ctx context.Context, sessionID, typ, payloadJSON string) error
 	AppendAudit(ctx context.Context, sessionID, action, decision, reason string) error
 	ListAudit(ctx context.Context, sessionID string) ([]AuditEntry, error)
@@ -83,6 +120,7 @@ type Store interface {
 	KVSet(ctx context.Context, key, value string) error
 
 	MarkInterruptedNonTerminal(ctx context.Context) (int64, error)
+	MarkRunningToolCallsUnknown(ctx context.Context) (int64, error)
 	Close() error
 }
 
