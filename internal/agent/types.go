@@ -43,6 +43,7 @@ const (
 	EventPaused           = "session:paused"
 	EventNotice           = "session:notice"
 	EventUsage            = "session:usage"
+	EventPermission       = "session:permission"
 )
 
 // Event payloads (JSON over the wire).
@@ -75,7 +76,7 @@ type (
 		Value string `json:"value"`
 	}
 	ApprovalOption struct {
-		Scope       string `json:"scope"` // once | session
+		Scope       string `json:"scope"` // once | session | persistent
 		Label       string `json:"label"`
 		Description string `json:"description"`
 	}
@@ -93,7 +94,26 @@ type (
 		ScopeOptions []ApprovalOption `json:"scopeOptions"`
 		Source       string           `json:"source"`
 		Reversible   bool             `json:"reversible"`
+		ContentTrust string           `json:"contentTrust,omitempty"`
+		TrustWarning string           `json:"trustWarning,omitempty"`
+		QuotaNotice  string           `json:"quotaNotice,omitempty"`
+		Warnings     []string         `json:"warnings,omitempty"`
+		Preset       string           `json:"preset,omitempty"`
 		ExpiresAt    string           `json:"expiresAt"`
+	}
+	PermissionPayload struct {
+		SessionID     string `json:"sessionID"`
+		ToolRef       string `json:"toolRef"`
+		Name          string `json:"name"`
+		Action        string `json:"action"`
+		Decision      string `json:"decision"`
+		Scope         string `json:"scope,omitempty"`
+		Reason        string `json:"reason,omitempty"`
+		Auto          bool   `json:"auto"`
+		QuotaExceeded bool   `json:"quotaExceeded,omitempty"`
+		ContentTrust  string `json:"contentTrust,omitempty"`
+		GrantedBy     string `json:"grantedBy,omitempty"`
+		Preset        string `json:"preset,omitempty"`
 	}
 	ApprovalResolvedPayload struct {
 		SessionID  string `json:"sessionID"`

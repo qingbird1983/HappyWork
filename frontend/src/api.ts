@@ -10,6 +10,9 @@ import type {
   Message,
   NoticePayload,
   PausedPayload,
+  PermissionPayload,
+  PermissionRule,
+  PresetInfo,
   Session,
   StatePayload,
   ToolPayload,
@@ -22,13 +25,16 @@ const SVC = "github.com/happywork/happywork/internal/desktop.SessionService";
 
 export const api = {
   listSessions: () => Call.ByName(`${SVC}.ListSessions`) as Promise<Session[]>,
-  createSession: (workspaceRoot: string) =>
-    Call.ByName(`${SVC}.CreateSession`, workspaceRoot) as Promise<Session>,
+  createSession: (workspaceRoot: string, preset: string) =>
+    Call.ByName(`${SVC}.CreateSession`, workspaceRoot, preset) as Promise<Session>,
+  listPresets: () => Call.ByName(`${SVC}.ListPresets`) as Promise<PresetInfo[]>,
+  listRules: () => Call.ByName(`${SVC}.ListRules`) as Promise<PermissionRule[]>,
+  deleteRule: (id: string) => Call.ByName(`${SVC}.DeleteRule`, id) as Promise<void>,
   send: (sessionId: string, text: string) =>
     Call.ByName(`${SVC}.Send`, sessionId, text) as Promise<void>,
   cancel: (sessionId: string) => Call.ByName(`${SVC}.Cancel`, sessionId) as Promise<void>,
-  approve: (sessionId: string, approvalId: string, scope: string) =>
-    Call.ByName(`${SVC}.Approve`, sessionId, approvalId, scope) as Promise<void>,
+  approve: (sessionId: string, approvalId: string, scope: string, phrase: string) =>
+    Call.ByName(`${SVC}.Approve`, sessionId, approvalId, scope, phrase) as Promise<void>,
   deny: (sessionId: string, approvalId: string, feedback: string) =>
     Call.ByName(`${SVC}.Deny`, sessionId, approvalId, feedback) as Promise<void>,
   resume: (sessionId: string) => Call.ByName(`${SVC}.Resume`, sessionId) as Promise<void>,
@@ -57,4 +63,6 @@ export const events = {
     Events.On("session:notice", (ev) => fn(ev.data as NoticePayload)),
   onUsage: (fn: (p: UsagePayload) => void) =>
     Events.On("session:usage", (ev) => fn(ev.data as UsagePayload)),
+  onPermission: (fn: (p: PermissionPayload) => void) =>
+    Events.On("session:permission", (ev) => fn(ev.data as PermissionPayload)),
 };

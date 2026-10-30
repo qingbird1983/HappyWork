@@ -132,8 +132,11 @@ func TestWriteApprovalOnce(t *testing.T) {
 	if payload.Title != "写入文件" || !strings.Contains(payload.Summary, "新建 a.txt") {
 		t.Fatalf("payload = %+v", payload)
 	}
-	if payload.Level != "confirm" || len(payload.ScopeOptions) != 2 {
+	if payload.Level != "confirm" || len(payload.ScopeOptions) != 3 {
 		t.Fatalf("level/options = %s %+v", payload.Level, payload.ScopeOptions)
+	}
+	if payload.ScopeOptions[2].Scope != "persistent" {
+		t.Fatalf("write must offer persistent scope: %+v", payload.ScopeOptions)
 	}
 	if !strings.Contains(payload.Preview, "第一版") {
 		t.Fatalf("preview = %q", payload.Preview)
@@ -360,6 +363,9 @@ func TestStateTransitionsIncludePersisting(t *testing.T) {
 	call := toolCall("r1", "list_dir", map[string]any{"path": "."})
 	f.prov.setPhases(writePhases(call)...)
 	f.runSend(t, s, "列目录")
+	// The terminal state becomes visible before setState emits its event; wait
+	// for the done event so the assertion is not racing the actor goroutine.
+	waitEventCount(t, f.emitter, EventDone, 1)
 	states := map[string]bool{}
 	for _, e := range f.emitter.all(EventState) {
 		if p, ok := e.(StatePayload); ok {

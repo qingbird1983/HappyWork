@@ -3,8 +3,10 @@ module github.com/happywork/happywork
 go 1.26.0
 
 require (
+	github.com/cyberphone/json-canonicalization v0.0.0-20261011152517-32a48195b9b2
 	github.com/gofrs/flock v0.13.1
 	github.com/wailsapp/wails/v3 v3.0.0
+	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.44.3
 )
 

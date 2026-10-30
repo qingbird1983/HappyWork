@@ -2,12 +2,12 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
 
-	"github.com/happywork/happywork/internal/model"
+	"github.com/happywork/happywork/internal/hook"
+	"github.com/happywork/happywork/internal/permission"
 	"github.com/happywork/happywork/internal/storage"
 	"github.com/happywork/happywork/internal/tool"
 	"github.com/happywork/happywork/internal/workspace"
@@ -42,6 +42,8 @@ type Session struct {
 	starting            bool
 	pending             *pendingApproval
 	pendingAllowSession bool
+	pendingAllowPersist bool
+	turnUntrusted       bool
 
 	cmds      chan command
 	approvals chan approvalDecision
@@ -87,6 +89,47 @@ func (s *Session) Info() storage.Session {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.info
+}
+
+func (s *Session) preset() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.info.Preset == "" {
+		return "default"
+	}
+	return s.info.Preset
+}
+
+// contentTrust reports whether the current run has seen untrusted tool output.
+func (s *Session) contentTrust() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.turnUntrusted {
+		return permission.Untrusted
+	}
+	return permission.Trusted
+}
+
+func (s *Session) markUntrusted() {
+	s.mu.Lock()
+	s.turnUntrusted = true
+	s.mu.Unlock()
+}
+
+// runHooks executes the configured hooks for one point. A nil runner is a
+// no-op; hook failures are already audited by the runner.
+func (s *Session) runHooks(ctx context.Context, ev hook.Event, allowedFields []string) hook.Result {
+	if s.mgr.hooks == nil {
+		return hook.Result{}
+	}
+	return s.mgr.hooks.Run(ctx, ev, allowedFields)
+}
+
+// noticeWarnings surfaces hook warnings to the user without blocking the run.
+func (s *Session) noticeWarnings(warnings []string) {
+	for _, w := range warnings {
+		s.notice("warn", w)
+	}
 }
 
 // Send submits one user message. It returns after the actor starts the run;
@@ -160,6 +203,11 @@ func (s *Session) loop() {
 			s.running = true
 			s.starting = false
 			s.cancel = cancel
+			if cmd.kind == cmdSubmit {
+				// Content-trust latch is per user request (ADR-0014); a resumed
+				// run keeps the latch from the interrupted turn.
+				s.turnUntrusted = false
+			}
 			s.mu.Unlock()
 			s.budget.resetRun()
 			cmd.reply <- nil
@@ -199,25 +247,6 @@ func (s *Session) setState(state string) {
 		s.mgr.log.Printf("agent: persist state %s: %v", state, err)
 	}
 	s.mgr.emitEvent(s.info.ID, EventState, StatePayload{SessionID: s.info.ID, State: state})
-}
-
-// history assembles the provider conversation: system prompt plus persisted
-// messages (assistant tool_calls restored from tool_calls_json).
-func (s *Session) history(ctx context.Context) ([]model.Message, error) {
-	msgs, err := s.mgr.store.Transcript(ctx, s.info.ID)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]model.Message, 0, len(msgs)+1)
-	out = append(out, model.Message{Role: model.RoleSystem, Content: systemPrompt})
-	for _, m := range msgs {
-		mm := model.Message{Role: m.Role, Content: m.Content, ToolCallID: m.ToolCallID}
-		if m.ToolCallsJSON != "" {
-			_ = json.Unmarshal([]byte(m.ToolCallsJSON), &mm.ToolCalls)
-		}
-		out = append(out, mm)
-	}
-	return out, nil
 }
 
 // run executes the turn loop. resume skips the user-message append (recovery
@@ -272,6 +301,14 @@ func (s *Session) run(ctx context.Context, userText string, resume bool) {
 			return
 		}
 
+		if res := s.runHooks(ctx, hook.Event{
+			Point: hook.BeforeModelCall, SessionID: sessID, TurnID: turnID,
+			Args: map[string]any{"messages": len(hist)},
+		}, nil); res.Denied() {
+			s.finish(StateError, "Hook 拒绝本次模型调用："+res.DenyReason)
+			return
+		}
+
 		assistText, calls, usage, err := s.streamTurn(ctx, hist)
 		if err != nil {
 			if assistText != "" {
@@ -286,18 +323,34 @@ func (s *Session) run(ctx context.Context, userText string, resume bool) {
 			s.finishRunErr(ctx, err)
 			return
 		}
+		afterArgs := map[string]any{
+			"textChars": len([]rune(assistText)),
+			"toolCalls": len(calls),
+		}
+		if usage != nil {
+			afterArgs["totalTokens"] = usage.TotalTokens
+		}
+		s.noticeWarnings(s.runHooks(ctx, hook.Event{
+			Point: hook.AfterModelCall, SessionID: sessID, TurnID: turnID,
+			Args: afterArgs,
+		}, nil).Warnings)
 
 		if err := s.recordUsage(ctx, hist, assistText, usage); err != nil {
 			s.finishRunErr(ctx, err)
 			return
 		}
 
-		if assistText != "" {
+		// A textless assistant turn still requested tools; it must be persisted
+		// with its tool_calls so the following tool results have a parent. A
+		// cancelled turn drops the tool_calls (they will never run) to keep the
+		// provider history valid.
+		canceled := ctx.Err() != nil
+		if assistText != "" || (len(calls) > 0 && !canceled) {
 			am := storage.Message{
 				ID: storage.NewID(), SessionID: sessID,
 				Role: storage.RoleAssistant, Content: assistText, TurnID: turnID,
 			}
-			if len(calls) > 0 {
+			if len(calls) > 0 && !canceled {
 				am.ToolCallsJSON = storage.MustJSON(calls)
 			}
 			if err := s.mgr.store.AppendMessage(bg, &am); err != nil {
@@ -309,7 +362,7 @@ func (s *Session) run(ctx context.Context, userText string, resume bool) {
 			s.finish(StateCompleted, "")
 			return
 		}
-		if ctx.Err() != nil {
+		if canceled {
 			s.finish(StateCancelled, "")
 			return
 		}
@@ -324,6 +377,7 @@ func (s *Session) run(ctx context.Context, userText string, resume bool) {
 			}
 			if r.trust == storage.TrustUntrusted {
 				tm.Trust = storage.TrustUntrusted
+				s.markUntrusted()
 			}
 			if err := s.mgr.store.AppendMessage(bg, &tm); err != nil {
 				s.mgr.log.Printf("agent: persist tool message: %v", err)
@@ -347,91 +401,6 @@ func (s *Session) finishRunErr(ctx context.Context, err error) {
 		return
 	}
 	s.finish(StateError, err.Error())
-}
-
-// streamTurn streams one provider turn. It returns the accumulated text, tool
-// calls and provider usage (nil when the mock provider omits it).
-func (s *Session) streamTurn(ctx context.Context, hist []model.Message) (string, []model.ToolCall, *model.Usage, error) {
-	sessID := s.info.ID
-	ch := s.mgr.prov.Stream(ctx, hist, s.tools.Specs())
-
-	var (
-		text    strings.Builder
-		calls   []model.ToolCall
-		usage   *model.Usage
-		batcher = newDeltaBatcher(func(joined string) {
-			s.mgr.emitEvent(sessID, EventDelta, DeltaPayload{SessionID: sessID, Text: joined})
-		})
-	)
-
-	for chunk := range ch {
-		if err := ctx.Err(); err != nil {
-			batcher.flush()
-			return text.String(), calls, usage, err
-		}
-		switch {
-		case chunk.Err != nil:
-			batcher.flush()
-			return text.String(), calls, usage, chunk.Err
-		case chunk.Done:
-			batcher.flush()
-			if chunk.Usage != nil {
-				usage = chunk.Usage
-			}
-			return text.String(), calls, usage, nil
-		case chunk.ToolCall != nil:
-			batcher.flush()
-			calls = append(calls, *chunk.ToolCall)
-			s.setState(StateRunningTool)
-		default:
-			text.WriteString(chunk.Delta)
-			batcher.add(chunk.Delta)
-		}
-	}
-	if err := ctx.Err(); err != nil {
-		batcher.flush()
-		return text.String(), calls, usage, err
-	}
-	batcher.flush()
-	return text.String(), calls, usage, nil
-}
-
-func (s *Session) recordUsage(ctx context.Context, hist []model.Message, completion string, usage *model.Usage) error {
-	estimated := usage == nil
-	promptChars := 0
-	for _, m := range hist {
-		promptChars += len(m.Content)
-	}
-	if usage == nil {
-		usage = &model.Usage{}
-	}
-	turnTokens, _ := s.budget.addUsage(*usage, estimated, s.mgr.modelName(), promptChars, len(completion))
-	s.mgr.emitEvent(s.info.ID, EventUsage, UsagePayload{
-		SessionID:   s.info.ID,
-		Model:       s.mgr.modelName(),
-		TurnTokens:  turnTokens,
-		TotalTokens: int(s.budget.tokens),
-		CostUSD:     s.budget.cost,
-		Estimated:   estimated,
-	})
-	// Token/cost limits are session scoped; exceeding them pauses the run.
-	if s.budget.tokens > s.tokenLimit() {
-		if s.budget.gracedTokens {
-			return ErrBudgetExhausted
-		}
-		if err := s.pauseForBudget(ctx, budgetTokens, fmt.Sprintf("token 用量 %d 超过上限", s.budget.tokens)); err != nil {
-			return err
-		}
-	}
-	if s.budget.cost > s.costLimit() {
-		if s.budget.gracedCost {
-			return ErrBudgetExhausted
-		}
-		if err := s.pauseForBudget(ctx, budgetCost, fmt.Sprintf("费用 $%.4f 超过上限", s.budget.cost)); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func (s *Session) checkWallClock(ctx context.Context) error {

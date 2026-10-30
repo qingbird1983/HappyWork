@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/happywork/happywork/internal/hook"
+	"github.com/happywork/happywork/internal/jcs"
 	"github.com/happywork/happywork/internal/model"
 	"github.com/happywork/happywork/internal/permission"
 	"github.com/happywork/happywork/internal/storage"
@@ -112,8 +114,26 @@ func (s *Session) execOne(ctx context.Context, call model.ToolCall, turnID int64
 	if result.trust == "" {
 		result.trust = storage.TrustTrusted
 	}
+	// Step 1: before_tool_call hooks. Only whitelisted top-level fields can be
+	// patched; the runner rejects everything else and audits each accepted
+	// patch by value hash (never by content).
+	beforeRes := s.runHooks(ctx, hook.Event{
+		Point: hook.BeforeToolCall, SessionID: sessID, TurnID: turnID,
+		ToolRef: meta.Ref, ToolName: meta.Name, Action: meta.Action, Trust: result.trust,
+		Args: args,
+	}, meta.PatchableFields)
+	if beforeRes.Denied() {
+		s.auditDeny(ctx, meta.Name, "hook: "+beforeRes.DenyReason)
+		s.emitToolRunning(call, meta.Ref, result.trust, argsSummary(args), "")
+		return s.finishCall(ctx, recordID, result, storage.ToolCallRecord{
+			TurnID: turnID, Name: meta.Name, ToolRef: meta.Ref, ArgsJSON: string(call.Arguments),
+			Decision: "deny", Risk: "deny",
+		}, storage.MustJSON(map[string]string{"error": "Hook 拒绝执行：" + beforeRes.DenyReason}), "denied")
+	}
+	args = hook.Apply(args, beforeRes.Patches)
+	hookWarnings := beforeRes.Warnings
 	result.argsSummary = argsSummary(args)
-	s.emitToolRunning(call, meta.Ref, result.trust, argsSummary(args), "")
+	s.emitToolRunning(call, meta.Ref, result.trust, result.argsSummary, "")
 
 	// Step 3/4: filesystem normalization and sensitive-path hard deny.
 	normalizedPath := ""
@@ -157,13 +177,21 @@ func (s *Session) execOne(ctx context.Context, call model.ToolCall, turnID int64
 	}
 	canonical := string(canonicalArgs)
 
-	// Step 5: gate and approval.
+	// Step 5: execute lock, permission engine and approval.
 	matchKey := ""
-	allowSession := meta.Ref == "builtin://write_file"
-	if allowSession && normalizedPath != "" {
+	if meta.Ref == "builtin://write_file" && normalizedPath != "" {
 		matchKey = permission.WriteMatchKey(filepath.Dir(normalizedPath))
 	}
-	verdict := s.mgr.gate.Evaluate(permission.Request{
+	execHash, hashErr := jcs.Hash([]byte(canonical))
+	if hashErr != nil {
+		s.auditDeny(ctx, meta.Name, "invalid I-JSON arguments: "+hashErr.Error())
+		return s.finishCall(ctx, recordID, result, storage.ToolCallRecord{
+			TurnID: turnID, Name: meta.Name, ToolRef: meta.Ref, MatchKey: matchKey,
+			ArgsJSON: canonical, Decision: "deny", Risk: "deny",
+		}, storage.MustJSON(map[string]string{"error": "工具参数不是合法 I-JSON，已拒绝执行"}), "denied")
+	}
+	verdict, err := s.mgr.engine.Evaluate(ctx, permission.Request{
+		SessionID:       sessID,
 		ToolRef:         meta.Ref,
 		Name:            meta.Name,
 		Source:          meta.Source,
@@ -172,31 +200,52 @@ func (s *Session) execOne(ctx context.Context, call model.ToolCall, turnID int64
 		InsideWorkspace: true,
 		Sensitive:       sensitive,
 		Destructive:     meta.Destructive,
+		Reversible:      meta.Reversible,
 		MatchKey:        matchKey,
+		Path:            normalizedPath,
+		Root:            s.root.String(),
+		Preset:          s.preset(),
+		ContentTrust:    s.contentTrust(),
+		Now:             s.clock.Now(),
 	})
+	if err != nil {
+		return toolResult{}, err
+	}
 	if matchKey == "" {
 		matchKey = verdict.MatchKey
+	}
+	s.emitPermission(meta, verdict)
+	if verdict.GrantedBy == permission.ScopePersistent {
+		if err := s.mgr.store.AppendAudit(ctx, sessID, "permission_rule_hit", "allow",
+			meta.Ref+" "+matchKey); err != nil {
+			s.mgr.log.Printf("agent: persist audit: %v", err)
+		}
 	}
 	if verdict.Decision == permission.DecisionDeny {
 		s.auditDeny(ctx, meta.Name, verdict.Reason)
 		return s.finishCall(ctx, recordID, result, storage.ToolCallRecord{
 			TurnID: turnID, Name: meta.Name, ToolRef: meta.Ref, MatchKey: matchKey,
-			ArgsJSON: canonical, Decision: "deny", Risk: permission.DecisionDeny,
+			ArgsJSON: canonical, Decision: "deny", Risk: permission.DecisionDeny, ExecHash: execHash,
 		}, storage.MustJSON(map[string]string{"error": "权限拒绝：" + verdict.Reason}), "denied")
 	}
 
 	decision := "auto"
 	feedback := ""
 	if verdict.Decision == permission.DecisionAsk {
-		decision, feedback, err = s.askApproval(ctx, call, meta, args, canonical, normalizedPath, matchKey, verdict, allowSession, recordID, turnID)
+		decision, feedback, err = s.askApproval(ctx, call, meta, args, canonical, normalizedPath, matchKey, execHash, verdict, hookWarnings, recordID, turnID)
 		if err != nil {
 			return toolResult{}, err
 		}
-		if decision == "deny" {
+		if decision == "deny" || decision == "hook_deny" {
+			message := "用户拒绝执行"
+			if decision == "hook_deny" {
+				message = feedback
+			}
 			return s.finishCall(ctx, recordID, result, storage.ToolCallRecord{
 				TurnID: turnID, Name: meta.Name, ToolRef: meta.Ref, MatchKey: matchKey,
 				ArgsJSON: canonical, Decision: "deny", Risk: verdict.Decision, Reversible: meta.Reversible,
-			}, storage.MustJSON(map[string]string{"error": "用户拒绝执行", "feedback": feedback}), "denied")
+				ExecHash: execHash,
+			}, storage.MustJSON(map[string]string{"error": message, "feedback": feedback}), "denied")
 		}
 	}
 
@@ -204,14 +253,27 @@ func (s *Session) execOne(ctx context.Context, call model.ToolCall, turnID int64
 	record := storage.ToolCallRecord{
 		ID: recordID, SessionID: sessID, TurnID: turnID, Name: meta.Name, ToolRef: meta.Ref,
 		MatchKey: matchKey, Risk: verdict.Decision, Reversible: meta.Reversible,
-		Decision: decision, ArgsJSON: canonical, Status: "running",
+		Decision: decision, ArgsJSON: canonical, ExecHash: execHash, Status: "running",
 	}
 	if err := s.mgr.store.AppendToolCall(ctx, &record); err != nil {
 		s.mgr.log.Printf("agent: persist tool call: %v", err)
 	}
 
-	// Step 7: execute. The approval snapshot was compared byte-for-byte in
-	// awaitApproval, so the bytes passed here are the bytes the user saw.
+	// Step 7: re-verify the execution lock and the resolved target immediately
+	// before running. Any drift between approval and execution is refused.
+	if verify, err := jcs.Hash([]byte(canonical)); err != nil || verify != execHash {
+		s.auditDeny(ctx, meta.Name, "execution-lock mismatch")
+		return s.finishCall(ctx, recordID, result, record,
+			storage.MustJSON(map[string]string{"error": "执行前参数校验失败，已拒绝执行"}), "denied")
+	}
+	if normalizedPath != "" {
+		if err := s.revalidateTarget(normalizedPath); err != nil {
+			s.auditDeny(ctx, meta.Name, "execution target changed: "+err.Error())
+			return s.finishCall(ctx, recordID, result, record,
+				storage.MustJSON(map[string]string{"error": "执行目标在审批后发生变化，已拒绝执行"}), "denied")
+		}
+	}
+	execStart := s.clock.Now()
 	value, execErr := t.Exec(ctx, json.RawMessage(canonical))
 	status := "ok"
 	resultJSON := ""
@@ -231,33 +293,71 @@ func (s *Session) execOne(ctx context.Context, call model.ToolCall, turnID int64
 			resultJSON = s.capResult(string(data))
 		}
 	}
+	// Step 8: after_tool_call hooks observe the result read-only before the
+	// record/message is finalized.
+	afterRes := s.runHooks(ctx, hook.Event{
+		Point: hook.AfterToolCall, SessionID: sessID, TurnID: turnID,
+		ToolRef: meta.Ref, ToolName: meta.Name, Action: meta.Action, Trust: result.trust,
+		Args: map[string]any{
+			"status":      status,
+			"resultBytes": len(resultJSON),
+			"durationMs":  s.clock.Now().Sub(execStart).Milliseconds(),
+		},
+	}, nil)
+	s.noticeWarnings(afterRes.Warnings)
 	return s.finishCall(ctx, recordID, result, record, resultJSON, status)
 }
 
 // askApproval emits the dialog and waits for a decision (or approval timeout →
-// paused → Resume). It persists the decided approval row.
-func (s *Session) askApproval(ctx context.Context, call model.ToolCall, meta tool.Meta, args map[string]any, canonical, normalizedPath, matchKey string, verdict permission.Verdict, allowSession bool, recordID string, turnID int64) (decision, note string, err error) {
+// paused → Resume). It persists the decided approval row and, for a persistent
+// scope, the reusable rule.
+func (s *Session) askApproval(ctx context.Context, call model.ToolCall, meta tool.Meta, args map[string]any, canonical, normalizedPath, matchKey, execHash string, verdict permission.Verdict, hookWarnings []string, recordID string, turnID int64) (decision, note string, err error) {
 	sessID := s.info.ID
-	// Session grants are only for built-in write approvals.
-	if allowSession && matchKey != "" {
-		ok, gerr := s.mgr.store.HasSessionApproval(ctx, sessID, matchKey)
-		if gerr != nil {
-			s.mgr.log.Printf("agent: session approval lookup: %v", gerr)
-		}
-		if ok {
-			s.notice("info", "已匹配本会话的写入授权")
-			return "auto", "", nil
-		}
+	// before_approval hooks may add warnings, demand a block-level dialog or
+	// deny the call outright; they cannot change arguments.
+	approvalRes := s.runHooks(ctx, hook.Event{
+		Point: hook.BeforeApproval, SessionID: sessID, TurnID: turnID,
+		ToolRef: meta.Ref, ToolName: meta.Name, Action: meta.Action, Trust: meta.Trust,
+		Args: args, Warnings: hookWarnings,
+	}, nil)
+	if approvalRes.Denied() {
+		s.auditDeny(ctx, meta.Name, "hook: "+approvalRes.DenyReason)
+		return "hook_deny", approvalRes.DenyReason, nil
 	}
-
+	level := verdict.Level
+	if approvalRes.EscalateBlock {
+		level = permission.LevelBlock
+	}
+	warnings := append(append([]string{}, hookWarnings...), approvalRes.Warnings...)
 	desc := describeCall(meta, args, normalizedPath, s.root, meta.Source)
 	options := []ApprovalOption{{Scope: "once", Label: "仅本次允许", Description: "只执行这一次"}}
+	allowSession := verdict.Scope == permission.ScopeSession || verdict.Scope == permission.ScopePersistent
 	if allowSession {
+		scopeText := "本会话内"
+		if meta.Ref == "builtin://write_file" {
+			scopeText = "本会话内写该目录下"
+		}
 		options = append(options, ApprovalOption{
 			Scope:       "session",
 			Label:       "本会话内允许",
-			Description: "本会话内写该目录下不再询问",
+			Description: scopeText + "不再询问",
 		})
+	}
+	allowPersistent := verdict.PersistentAllowed && matchKey != ""
+	if allowPersistent {
+		options = append(options, ApprovalOption{
+			Scope:       "persistent",
+			Label:       "持久允许（需输入短语）",
+			Description: "本机所有会话有效；可在权限规则中查看和撤销",
+		})
+	}
+	trustWarning := ""
+	if s.contentTrust() == permission.Untrusted {
+		trustWarning = "当前回合包含外部不可信内容，本次仅允许一次"
+	}
+	quotaNotice := ""
+	if verdict.QuotaExceeded {
+		quotaNotice = "自动放行限额已触发，本次需要你确认"
 	}
 	payload := ApprovalPayload{
 		ApprovalID:   storage.NewID(),
@@ -265,7 +365,7 @@ func (s *Session) askApproval(ctx context.Context, call model.ToolCall, meta too
 		ToolCallID:   call.ID,
 		ToolName:     meta.Name,
 		ToolRef:      meta.Ref,
-		Level:        verdict.Level,
+		Level:        level,
 		Title:        desc.title,
 		Summary:      desc.summary,
 		Fields:       desc.fields,
@@ -273,8 +373,13 @@ func (s *Session) askApproval(ctx context.Context, call model.ToolCall, meta too
 		ScopeOptions: options,
 		Source:       meta.Source,
 		Reversible:   meta.Reversible,
+		ContentTrust: s.contentTrust(),
+		TrustWarning: trustWarning,
+		QuotaNotice:  quotaNotice,
+		Warnings:     warnings,
+		Preset:       s.preset(),
 	}
-	d, err := s.awaitApproval(ctx, payload, canonical, allowSession)
+	d, err := s.awaitApproval(ctx, payload, canonical, allowSession, allowPersistent)
 	if err != nil {
 		return "", "", err
 	}
@@ -285,21 +390,35 @@ func (s *Session) askApproval(ctx context.Context, call model.ToolCall, meta too
 	}
 	now := storage.Now()
 	row := storage.Approval{
-		ID:         payload.ApprovalID,
-		SessionID:  sessID,
-		TurnID:     turnID,
-		ToolCallID: recordID,
-		ToolRef:    meta.Ref,
-		MatchKey:   matchKey,
-		Level:      verdict.Level,
-		Decision:   decision,
-		Scope:      d.scope,
-		ArgsJSON:   canonical,
-		Note:       note,
-		DecidedAt:  now,
+		ID:           payload.ApprovalID,
+		SessionID:    sessID,
+		TurnID:       turnID,
+		ToolCallID:   recordID,
+		ToolRef:      meta.Ref,
+		MatchKey:     matchKey,
+		Level:        level,
+		Decision:     decision,
+		Scope:        d.scope,
+		ArgsJSON:     canonical,
+		ExecHash:     execHash,
+		ContentTrust: s.contentTrust(),
+		Note:         note,
+		DecidedAt:    now,
 	}
 	if err := s.mgr.store.AppendApproval(ctx, &row); err != nil {
 		s.mgr.log.Printf("agent: persist approval: %v", err)
+	}
+	if d.allow && d.scope == permission.ScopePersistent && matchKey != "" {
+		rule := storage.PermissionRule{
+			ToolRef: meta.Ref, Action: meta.Action, MatchKey: matchKey,
+			Note: "created from approval " + payload.ApprovalID,
+		}
+		if err := s.mgr.store.CreatePermissionRule(ctx, &rule); err != nil {
+			s.mgr.log.Printf("agent: persist permission rule: %v", err)
+			s.notice("warn", "持久规则保存失败，本次批准仍然有效")
+		} else {
+			s.notice("info", "已创建持久写入规则；可在权限规则中查看和撤销")
+		}
 	}
 	if !d.allow {
 		s.auditDeny(ctx, meta.Name, "user denied: "+note)
@@ -311,6 +430,52 @@ func (s *Session) askApproval(ctx context.Context, call model.ToolCall, meta too
 		return decision, "", nil
 	}
 	return decision, note, nil
+}
+
+// revalidateTarget re-resolves a path and rejects sensitive targets or paths
+// that changed identity between approval and execution.
+func (s *Session) revalidateTarget(path string) error {
+	again, err := s.root.Resolve(path)
+	if err != nil {
+		return err
+	}
+	if !samePath(again, path) {
+		return fmt.Errorf("path changed after approval")
+	}
+	rel, err := s.root.Rel(again)
+	if err != nil {
+		return err
+	}
+	if workspace.Sensitive(rel) {
+		return workspace.ErrSensitivePath
+	}
+	return nil
+}
+
+func samePath(a, b string) bool {
+	a, b = filepath.Clean(a), filepath.Clean(b)
+	if filepath.Separator == '\\' {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
+}
+
+// emitPermission records the engine verdict for every tool call.
+func (s *Session) emitPermission(meta tool.Meta, v permission.Verdict) {
+	s.mgr.emitEvent(s.info.ID, EventPermission, PermissionPayload{
+		SessionID:     s.info.ID,
+		ToolRef:       meta.Ref,
+		Name:          meta.Name,
+		Action:        meta.Action,
+		Decision:      v.Decision,
+		Scope:         v.Scope,
+		Reason:        v.Reason,
+		Auto:          v.Auto,
+		QuotaExceeded: v.QuotaExceeded,
+		ContentTrust:  s.contentTrust(),
+		GrantedBy:     v.GrantedBy,
+		Preset:        s.preset(),
+	})
 }
 
 // finishCall persists the record outcome, emits the final tool event and

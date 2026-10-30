@@ -3,78 +3,26 @@ import { api, events } from "./api";
 import type {
   AppInfo,
   ApprovalPayload,
-  Message,
   NoticePayload,
   PausedPayload,
+  PermissionRule,
+  PresetInfo,
   Session,
   UsagePayload,
 } from "./types";
 import { SafeText } from "./render";
-import { ApprovalDialog } from "./components/ApprovalDialog";
+import { ApprovalDialog, type ApprovalScope } from "./components/ApprovalDialog";
 import { PausedBanner } from "./components/PausedBanner";
 import { InterruptedBanner } from "./components/InterruptedBanner";
+import { SessionSidebar, STATE_LABELS } from "./components/SessionSidebar";
 import { ToolBlock } from "./components/ToolBlock";
-
-type Block =
-  | { kind: "user"; text: string }
-  | { kind: "assistant"; text: string }
-  | {
-      kind: "tool";
-      id: string;
-      name: string;
-      status: string;
-      trust?: "trusted" | "untrusted";
-      argsSummary?: string;
-      detail?: string;
-    };
-
-interface LiveState {
-  text: string;
-  tools: Block[];
-}
-
-const EMPTY_LIVE: LiveState = { text: "", tools: [] };
-
-const STATE_LABELS: Record<string, string> = {
-  idle: "空闲",
-  thinking: "思考中…",
-  running_tool: "执行工具…",
-  persisting: "保存中…",
-  awaiting_approval: "等待批准…",
-  paused: "已暂停",
-  completed: "已完成",
-  error: "出错",
-  cancelled: "已取消",
-  interrupted: "上次中断",
-};
-
-function toolStatus(content: string): "ok" | "failed" {
-  try {
-    const parsed = JSON.parse(content) as { error?: string };
-    return parsed.error ? "failed" : "ok";
-  } catch {
-    return "ok";
-  }
-}
-
-function transcriptToBlocks(msgs: Message[]): Block[] {
-  const out: Block[] = [];
-  for (const m of msgs) {
-    if (m.role === "user") out.push({ kind: "user", text: m.content });
-    else if (m.role === "assistant") out.push({ kind: "assistant", text: m.content });
-    else if (m.role === "tool") {
-      out.push({
-        kind: "tool",
-        id: m.id,
-        name: m.toolName || "tool",
-        status: toolStatus(m.content),
-        trust: m.trust,
-        detail: m.content,
-      });
-    }
-  }
-  return out;
-}
+import {
+  applyPermission,
+  EMPTY_LIVE,
+  transcriptToBlocks,
+  type Block,
+  type LiveState,
+} from "./live";
 
 export default function App() {
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -85,6 +33,9 @@ export default function App() {
   const [input, setInput] = useState("");
   const [workspace, setWorkspace] = useState("");
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
+  const [presets, setPresets] = useState<PresetInfo[]>([]);
+  const [preset, setPreset] = useState("default");
+  const [rules, setRules] = useState<PermissionRule[]>([]);
   const [approvals, setApprovals] = useState<Record<string, ApprovalPayload>>({});
   const [paused, setPaused] = useState<Record<string, PausedPayload>>({});
   const [notices, setNotices] = useState<Record<string, NoticePayload>>({});
@@ -107,6 +58,14 @@ export default function App() {
     setBlocks(transcriptToBlocks(msgs));
   }, []);
 
+  const reloadRules = useCallback(async () => {
+    try {
+      setRules((await api.listRules()) ?? []);
+    } catch {
+      /* backend without rules support */
+    }
+  }, []);
+
   const patchLive = useCallback((sessionId: string, fn: (s: LiveState) => LiveState) => {
     setLive((prev) => ({ ...prev, [sessionId]: fn(prev[sessionId] ?? EMPTY_LIVE) }));
   }, []);
@@ -119,6 +78,16 @@ export default function App() {
       } catch {
         /* older backend: leave the bar empty */
       }
+      try {
+        const list = (await api.listPresets()) ?? [];
+        if (list.length > 0) {
+          setPresets(list);
+          if (!list.some((p) => p.name === "default")) setPreset(list[0].name);
+        }
+      } catch {
+        /* presets unavailable */
+      }
+      await reloadRules();
       try {
         const list = await reloadSessions();
         if (list.length > 0) {
@@ -138,7 +107,7 @@ export default function App() {
         }));
       }
     })();
-  }, [reloadSessions, loadTranscript]);
+  }, [reloadSessions, loadTranscript, reloadRules]);
 
   // Event subscriptions (all sessions; screens filter by id).
   useEffect(() => {
@@ -162,6 +131,7 @@ export default function App() {
               kind: "tool",
               id,
               name: p.name,
+              toolRef: p.toolRef,
               status: "running",
               trust: p.trust,
               argsSummary: p.argsSummary,
@@ -187,6 +157,7 @@ export default function App() {
                 kind: "tool",
                 id,
                 name: p.name,
+                toolRef: p.toolRef,
                 status: p.status,
                 trust: p.trust,
                 argsSummary: p.argsSummary,
@@ -230,6 +201,7 @@ export default function App() {
           delete next[p.sessionID];
           return next;
         });
+        if (p.scope === "persistent") void reloadRules();
       }),
       events.onPaused((p) => {
         setPaused((prev) => ({ ...prev, [p.sessionID]: p }));
@@ -248,9 +220,12 @@ export default function App() {
       events.onUsage((p) => {
         setUsage((prev) => ({ ...prev, [p.sessionID]: p }));
       }),
+      events.onPermission((p) => {
+        patchLive(p.sessionID, (s) => applyPermission(s, p));
+      }),
     ];
     return () => offs.forEach((off) => off());
-  }, [loadTranscript, patchLive, reloadSessions]);
+  }, [loadTranscript, patchLive, reloadSessions, reloadRules]);
 
   useEffect(() => {
     transcriptAnchor.current?.scrollIntoView({ block: "end" });
@@ -261,6 +236,7 @@ export default function App() {
   const currentPaused = paused[currentId];
   const currentNotice = notices[currentId];
   const currentUsage = usage[currentId];
+  const currentSession = sessions.find((s) => s.id === currentId);
   const interrupted = state === "interrupted";
   const busy =
     state === "thinking" ||
@@ -280,7 +256,7 @@ export default function App() {
       return;
     }
     try {
-      const s = await api.createSession(root);
+      const s = await api.createSession(root, preset || "default");
       setNotices((prev) => ({ ...prev, [s.id]: { sessionID: s.id, level: "info", text: "" } }));
       await reloadSessions();
       setBlocks([]);
@@ -331,9 +307,9 @@ export default function App() {
     }
   };
 
-  const approve = async (approval: ApprovalPayload, scope: "once" | "session") => {
+  const approve = async (approval: ApprovalPayload, scope: ApprovalScope, phrase: string) => {
     try {
-      await api.approve(approval.sessionID, approval.approvalID, scope);
+      await api.approve(approval.sessionID, approval.approvalID, scope, phrase);
       setApprovals((prev) => {
         const next = { ...prev };
         delete next[approval.sessionID];
@@ -354,6 +330,15 @@ export default function App() {
       });
     } catch (e) {
       notice("error", `拒绝失败：${String(e)}`);
+    }
+  };
+
+  const deleteRule = async (id: string) => {
+    try {
+      await api.deleteRule(id);
+      await reloadRules();
+    } catch (e) {
+      notice("error", `撤销规则失败：${String(e)}`);
     }
   };
 
@@ -400,6 +385,24 @@ export default function App() {
                 MCP 异常
               </span>
             )}
+            {appInfo.hooksError && (
+              <span className="mcp-status error" title={appInfo.hooksError}>
+                Hook 异常
+              </span>
+            )}
+            {appInfo.presetsError && (
+              <span className="mcp-status error" title={appInfo.presetsError}>
+                预设异常
+              </span>
+            )}
+            {appInfo.hooksFingerprint && (
+              <span className="hook-fingerprint" title={appInfo.hooksFingerprint}>
+                Hook {appInfo.hooksFingerprint.slice(0, 8)}
+              </span>
+            )}
+            {currentSession && (
+              <span className="preset-current">预设 {currentSession.preset || "default"}</span>
+            )}
           </>
         )}
         {currentUsage && (
@@ -411,34 +414,19 @@ export default function App() {
       </header>
 
       <div className="app">
-        <aside className="sidebar">
-          <div className="sidebar-head">会话</div>
-          <ul className="session-list">
-            {sessions.map((s) => (
-              <li key={s.id}>
-                <button
-                  className={s.id === currentId ? "session active" : "session"}
-                  onClick={() => void selectSession(s.id)}
-                  title={s.workspaceRoot}
-                >
-                  <span className="session-title">{s.title || "(untitled)"}</span>
-                  <span className="session-state">{STATE_LABELS[s.state] ?? s.state}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-          <div className="workspace-row">
-            <input
-              className="workspace-input"
-              placeholder="工作区目录（绝对路径）"
-              value={workspace}
-              onChange={(e) => setWorkspace(e.target.value)}
-            />
-            <button className="new-session" onClick={() => void createSession()}>
-              新建会话
-            </button>
-          </div>
-        </aside>
+        <SessionSidebar
+          sessions={sessions}
+          currentId={currentId}
+          workspace={workspace}
+          presets={presets}
+          preset={preset}
+          rules={rules}
+          onSelect={(id) => void selectSession(id)}
+          onWorkspaceChange={setWorkspace}
+          onCreate={() => void createSession()}
+          onPresetChange={setPreset}
+          onDeleteRule={(id) => void deleteRule(id)}
+        />
 
         <main className="main">
           {interrupted && (
@@ -472,6 +460,10 @@ export default function App() {
                   trust={b.trust}
                   argsSummary={b.argsSummary}
                   detail={b.detail}
+                  decision={b.decision}
+                  scope={b.scope}
+                  automatic={b.automatic}
+                  quotaExceeded={b.quotaExceeded}
                 />
               ) : (
                 <div key={`${b.kind}-${i}`} className={`block ${b.kind}`}>
@@ -488,6 +480,10 @@ export default function App() {
                   trust={t.trust}
                   argsSummary={t.argsSummary}
                   detail={t.detail}
+                  decision={t.decision}
+                  scope={t.scope}
+                  automatic={t.automatic}
+                  quotaExceeded={t.quotaExceeded}
                 />
               ) : null,
             )}
@@ -544,7 +540,7 @@ export default function App() {
         <ApprovalDialog
           key={currentApproval.approvalID}
           payload={currentApproval}
-          onApprove={(scope) => void approve(currentApproval, scope)}
+          onApprove={(scope, phrase) => void approve(currentApproval, scope, phrase)}
           onDeny={(feedback) => void deny(currentApproval, feedback)}
         />
       )}

@@ -15,7 +15,9 @@ import (
 
 	"github.com/happywork/happywork/internal/agent"
 	"github.com/happywork/happywork/internal/desktop"
+	"github.com/happywork/happywork/internal/hook"
 	"github.com/happywork/happywork/internal/mcp"
+	"github.com/happywork/happywork/internal/permission"
 	"github.com/happywork/happywork/internal/singleinst"
 	"github.com/happywork/happywork/internal/storage"
 )
@@ -68,7 +70,39 @@ func main() {
 	if mcpManager != nil {
 		defer mcpManager.Close()
 	}
-	opts := agent.Options{DataDir: dataDir, ModelName: modelName}
+	presetDir, hookDir := "", ""
+	if dataDir != "" {
+		presetDir = filepath.Join(dataDir, "presets.d")
+		hookDir = filepath.Join(dataDir, "hooks.d")
+	}
+	presets, presetErrs := permission.LoadPresets(presetDir)
+	presetErr := ""
+	for _, err := range presetErrs {
+		logger.Printf("presets: %v", err)
+		if presetErr == "" {
+			presetErr = err.Error()
+		}
+	}
+	hookAudit := func(ev hook.Event, name, kind, reason string) {
+		if err := store.AppendAudit(context.Background(), ev.SessionID, name, kind, reason); err != nil {
+			logger.Printf("hook audit: %v", err)
+		}
+		logger.Printf("hook %s %s: %s", name, kind, reason)
+	}
+	hookRunner, hookInfo, hookErr := hook.LoadDir(hookDir, hook.Builtins(), hookAudit)
+	hooksFingerprint := ""
+	hookErrText := ""
+	if hookErr != nil {
+		logger.Printf("hooks config: %v", hookErr)
+		hookErrText = "Hook 配置错误：" + hookErr.Error()
+		hookRunner = nil
+	} else {
+		hooksFingerprint = hookInfo.Fingerprint
+		if hooksFingerprint != "" {
+			logger.Printf("hooks: %d enabled, config sha256=%s", len(hookInfo.Enabled), hooksFingerprint)
+		}
+	}
+	opts := agent.Options{DataDir: dataDir, ModelName: modelName, Presets: presets, Hooks: hookRunner}
 	mcpServers := 0
 	if mcpManager != nil {
 		opts.ExternalTools = mcpManager.Tools
@@ -95,12 +129,15 @@ func main() {
 	}
 
 	info := desktop.AppInfo{
-		Provider:        providerName,
-		Model:           modelName,
-		Mock:            isMock,
-		DataDestination: dataDestination(isMock),
-		MCPServers:      mcpServers,
-		MCPError:        mcpErr,
+		Provider:         providerName,
+		Model:            modelName,
+		Mock:             isMock,
+		DataDestination:  dataDestination(isMock),
+		MCPServers:       mcpServers,
+		MCPError:         mcpErr,
+		HooksFingerprint: hooksFingerprint,
+		HooksError:       hookErrText,
+		PresetsError:     presetErr,
 	}
 	if err := desktop.Run(desktop.Options{Manager: manager, Emitter: manager.Emitter(), Logger: logger, AppInfo: info}); err != nil {
 		logger.Fatalf("desktop: %v", err)
