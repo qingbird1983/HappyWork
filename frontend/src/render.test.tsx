@@ -250,6 +250,17 @@ const createBackup: FileBackup = {
 
 const incompleteCreate: FileBackup = { ...createBackup, id: "b4", version: 0, writtenSha256: "" };
 
+// A pre-restore safety copy is hashed at copy time and rechecked on restore;
+// it has no write to verify, so verified_at is empty and it must still be
+// offered as a restore source (undo the restore).
+const safetyBackup: FileBackup = {
+  ...overwriteBackup,
+  id: "b5",
+  version: 4,
+  reason: "pre_restore",
+  verifiedAt: undefined,
+};
+
 // Paths come from the model, so they must stay escaped text.
 const hostilePath = `notes/<img src=x onerror=alert(1)>.md`;
 
@@ -272,6 +283,19 @@ describe("BackupsPanel", () => {
     expect(html.match(/撤销创建/g)).toHaveLength(1);
     expect(html).toContain("未确认");
     expect(html).toContain("未完成");
+  });
+
+  it("offers the pre-restore safety copy as a restore source", () => {
+    const html = renderToStaticMarkup(
+      <BackupList
+        groups={[{ relPath: "note.txt", backups: [safetyBackup] }]}
+        busy={false}
+        onPick={() => {}}
+      />,
+    );
+    expect(html).toContain("安全副本");
+    expect(html.match(/恢复/g)).toHaveLength(1);
+    expect(html).not.toContain("未确认");
   });
 
   it("disables restore and undo while the session is running", () => {
