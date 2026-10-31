@@ -36,7 +36,8 @@ Phase 4（不可变审计 + 备份式回滚 + 三平台签名 CI）实现完成�
 - 做了什么：新增 `scripts/gate.sh`（本地与 CI 同源，`--race/--build/--skip-lint`）；`ci.yml` 去掉 push 触发 + 矩阵默认只 windows + 全部 job `timeout-minutes` + `concurrency`；`release.yml` 加 `platforms` 输入（默认 windows）、Windows dry-run 改内存临时证书 + `Get-AuthenticodeSignature` 断言（不再碰证书存储）；`.gitattributes` 补齐 `eol=lf`；修一处"先改状态后发事件"的暂停顺序缺陷并加顺序断言。
 - 分支：`fix/phase4-release-dry-run`（含上述 + ADR-0018 + standards/02、04 + report/roadmap/CHANGELOG 0.1.015 + P-016）。合并 main 后需要在 main 上 dispatch 一次 `platforms=windows` 才算 A6。
 - 本机**有** Windows SDK 的 `signtool`（`scripts/windows-sign-check.ps1` 已把"临时证书→签名副本→验签→**主体**篡改报 `0x80096010`"跑通，且不动待验收的 `bin\happywork.exe`），但**没有 makensis**：安装包那一步只能在远端验证。**`wails3 tool sign` 在 Windows 是空实现**（本机实测报 not yet implemented），流水线已改为直接调 `signtool sign`；Linux 的 `dpkg-sig` 在 ubuntu-26.04 镜像缺失，按首发范围延后。
-- 下一次 A6 复跑要看四步：`choco install nsis` 成功、安装包生成、`signtool sign` 签两个产物、`Get-AuthenticodeSignature` 断言（签名者指纹 + EKU）与主体篡改报 `TRUST_E_BAD_DIGEST 0x80096010` 通过。负向对照的教训见 P-017：改文件尾部只能破坏证书表，证明不了摘要比对。
+- 下一次 A6 复跑要看四步：`choco install nsis` 成功且后续步骤能找到 `makensis`（PATH 写 `GITHUB_PATH`，P-018）、安装包生成、`signtool sign` 签两个产物、`Get-AuthenticodeSignature` 断言（签名者指纹 + EKU）与主体篡改报 `TRUST_E_BAD_DIGEST 0x80096010` 通过。负向对照的教训见 P-017：改文件尾部只能破坏证书表，证明不了摘要比对。
+- 2026-10-31 追加：run `41156332487` 已证明单平台门控与快速失败生效（5 分 36 秒，`prepare` 绿、`windows` 红在 `makensis not found`；NSIS 实际已装好，是 runner 进程 PATH 不刷新）。修复合并后需要再 dispatch 一次。
 
 ## 快速恢复上下文
 
