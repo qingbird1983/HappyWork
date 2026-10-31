@@ -72,10 +72,10 @@ Phase 3 证明"控制是确定、可扩展、可追溯的"；Phase 4 证明"**�
 - [x] A2 覆盖与导出：工具判定、审批、持久规则、Hook、备份/恢复、链验证均有审计；不含正文/提示词/密钥原文；JSONL + manifest 导出可在测试中复算通过。
 - [x] A3 备份版本：同一文件连续覆盖保留多版本（版本号/哈希/大小/权限/时间正确）；按保留策略裁剪；恢复所选版本成功，恢复前自动备份当前状态，恢复后可再恢复；越界/敏感/身份变化路径被拒绝。
 - [x] A4 新建撤销与写后校验：新建文件记录 `kind=create`；未修改时可撤销创建并移入备份区；修改后拒绝撤销；写后 SHA-256 一致才成功；故障注入触发自动回滚/移入备份区并审计；备份区软上限触发时拒绝新的覆盖备份（新建不受影响）而非静默丢弃。
-- [ ] A5 UI/API：审计面板显示最近事件、链状态，可验证/导出；备份面板按文件列版本与大小，可恢复/撤销；运行中会话拒绝恢复并给出明确提示；渲染安全门禁全绿。真机操作步骤见 [design/phase-4/a5-checklist.md](../design/phase-4/a5-checklist.md)。
+- [x] A5 UI/API：审计面板显示最近事件、链状态，可验证/导出；备份面板按文件列版本与大小，可恢复/撤销；运行中会话拒绝恢复并给出明确提示；渲染安全门禁全绿。真机操作步骤见 [design/phase-4/a5-checklist.md](../design/phase-4/a5-checklist.md)。**2026-10-31 所有者授权代跑完成**：链状态「完整/密封 17 条」，三次导出均无绝对路径/正文/盘符，恢复与撤销创建按预期工作，运行中提示「会话正在运行；请先停止，再恢复或撤销创建。」；真机抓到安全副本不可恢复的 UI 缺陷并修复（P-020），复验通过。
 - [x] A6 签名 dry-run（**范围按 ADR-0018 收敛为 Windows**）：`release.yml` 的 dry-run 在 Windows 上完成"构建 → 用临时测试证书签名 → 验签"三件事且全绿，不上传 Release；缺少真实凭据时正式标签**明确失败**而不是发布未签名产物。取证依赖：`workflow_dispatch` 只对默认分支上存在的 workflow 生效，故只能在 `release.yml` 合入 main 之后触发（P-015）。**通过的 run：`41157581586`**（`prepare` 2m09s、`windows` 3m45s、macOS/Linux/release 按 `platforms=windows` 跳过；`makensis` 生成安装包、`signtool sign` 签 exe 与安装包、`Get-AuthenticodeSignature` 指纹 + EKU 断言、主体篡改报 `0x80096010`、产物 `windows-dry-run-preview.zip` 上传）。此前失败依次暴露 P-016/P-012 复发/P-018/P-019 与 PowerShell 语法问题，均已修复。macOS/Linux 按所有者"首发 Windows 优先"的决定延后，登记 backlog。
 - [ ] A7 真实签名（条件，**已随首发排期主动延后**）：所有者提供 Windows 证书、Apple Developer ID/公证凭据、Linux GPG 私钥后，`v*` 标签产物通过 `signtool verify`、`codesign/spctl/stapler`、包签名平台工具（`dpkg-sig`/`rpm --checksig`）与 `gpg --verify SHA256SUMS.asc`；未提供则记录遗留，不伪造证据。
-- [ ] A8 门禁：审计/备份/迁移/故障注入测试全绿；`bash scripts/gate.sh --race` 全绿（fmt/build/vet/lint/test + 前端 format/lint/typecheck/unit + render-safety + check-size，本地与 CI 同源）；首发平台 `wails3 build` 与 Windows release dry-run 全绿（run `41157581586`，2026-10-31）；验收报告落盘（A5 签收后定稿）。三平台齐跑与矩阵绿属于里程碑/正式标签要求，不再作为每轮推送的门禁（ADR-0018）。
+- [x] A8 门禁：审计/备份/迁移/故障注入测试全绿；`bash scripts/gate.sh --race` 全绿（fmt/build/vet/lint/test + 前端 format/lint/typecheck/unit + render-safety + check-size，本地与 CI 同源）；首发平台 `wails3 build` 与 Windows release dry-run 全绿（run `41157581586`，2026-10-31）；验收报告落盘并定稿。三平台齐跑与矩阵绿属于里程碑/正式标签要求，不再作为每轮推送的门禁（ADR-0018）。
 
 ## 6. 依赖与风险
 
