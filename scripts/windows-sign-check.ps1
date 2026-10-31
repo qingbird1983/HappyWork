@@ -108,3 +108,5 @@ try {
 
 Write-Host ""
 Write-Host "PASS: local Windows chain -- temp cert, sign, verify identity/EKU, body tamper -> bad digest."
+# 负向对照里的 signtool verify 必然返回 1；显式 0 才是本脚本的结论（P-019）。
+exit 0

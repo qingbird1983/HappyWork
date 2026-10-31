@@ -34,7 +34,7 @@
 - 因此"main 绿"不再是自动事实：合并 main 之前必须自己确认本地 `gate.sh --race` 全绿，合并后手动 dispatch 一次远端 CI 作为里程碑证据。
 - 每个 job 必须有 `timeout-minutes`；workflow 必须有 `concurrency` + `cancel-in-progress`。缺任何一条视为流水线缺陷，不合并。
 - **推远端之前先在本地复现同类命令**：workflow 里每个 `pwsh` 步骤都要能用 PowerShell 的 AST 解析器（`Parser::ParseFile`）通过语法检查，签名/验签一类能在本机做的要先用 `windows-sign-check.ps1` 跑通。本项目两次远端失败（证书存储弹窗挂死、`New-Object` 语法错误）都属于"本机本可发现"。用 PS 5.1 按行解析 UTF-8 文件时必须加 `-Encoding UTF8`，否则默认 ANSI 解码会吞换行（实测 644 行读成 594 行）。
-- **负向对照要打中真正的检查点**：证明"篡改会被拒"必须篡改镜像主体并从 `signtool` 拿到摘要错误码 `0x80096010`；篡改文件尾部只是破坏证书表，得到的 `NotSigned`/链错误证明不了摘要比对（P-017）。
+- **负向对照要打中真正的检查点**：证明"篡改会被拒"必须篡改镜像主体并从 `signtool` 拿到摘要错误码 `0x80096010`；篡改文件尾部只是破坏证书表，得到的 `NotSigned`/链错误证明不了摘要比对（P-017）。同理，**故意执行失败命令的步骤末尾必须显式 `exit 0`**——runner 的 `pwsh -command` 会把最后一次原生命令的退出码当成步骤退出码（P-019）。
 - **第三方 CLI 的能力边界必须实测**，`--help` 列出不代表已实现：`wails3 tool sign` 在 Windows 上就是空实现（P-012 复发记录）。
 - **安装工具 ≠ 后续步骤能找到它**：choco/winget/npm -g 改的是注册表或用户目录，runner agent 的进程环境不刷新；安装步骤必须显式定位可执行文件并写入 `$GITHUB_PATH`，否则下一步就是 `executable file not found in $PATH`（P-018）。
 

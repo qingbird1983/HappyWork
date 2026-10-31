@@ -285,6 +285,10 @@ jobs:
             }
           }
           Write-Host "dry-run 验签通过：签名存在、签名者匹配、具备代码签名 EKU、主体篡改报 0x80096010（临时自签证书不参与系统信任链）"
+          # 负向对照里的 signtool verify 必然是退出码 1；runner 用 `pwsh -command ". '{0}'"` 执行，
+          # 脚本正常结束也会把 $LASTEXITCODE 带成进程退出码，于是"断言全过"的步骤以 1 结束
+          # （run 41156918894 就红在这里）。显式 0 才是这一步的结论。
+          exit 0
 
       - name: 清理证书
         if: always()

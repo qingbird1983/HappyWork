@@ -20,8 +20,9 @@
 - 本机实测发现：Wails v3.0.0 的 `wails3 tool sign` **在 Windows 上没有实现**（直接报 "built-in Windows signing not yet implemented"），原流水线的 Windows 签名步骤无论怎么跑都会失败。已改为直接调用 Windows SDK 的 `signtool sign`，并新增 `scripts/windows-sign-check.ps1`：在本机几十秒、零额度地走完"临时证书 → 签名副本 → 验签 → 主体篡改必须报摘要错误"四步；判断"文件到底签没签"不能看状态词（自签证书报 `UnknownError`，未签名文件报 `NotSigned` 且没有签名者证书），要看是否存在签名者证书。
 - 负向对照第一版是假的，本机复跑才发现：改文件**尾部**只是破坏签名容器，得到的 `NotSigned`/链错误不能证明内容被比对过。现在改为改镜像主体，并要求 `signtool` 明确返回 `TRUST_E_BAD_DIGEST (0x80096010)`——错误码与系统语言、.NET 版本无关（P-017）。同时补了一条纪律：PowerShell 5.1 按行读 UTF-8 文件必须显式 `-Encoding UTF8`，否则默认 ANSI 解码会吞换行（实测 644 行读成 594 行）。
 - 第三次 Windows dry-run（run `41156332487`）5 分 36 秒结束：`prepare` 绿、macOS/Linux 按默认单平台跳过、Windows 红在 NSIS——安装日志明明成功，后续步骤却报 `makensis: executable file not found`，因为 choco 改的是注册表 PATH，runner 进程环境不刷新。现在安装步骤会把 NSIS 目录写入 `GITHUB_PATH`，找不到就明确失败（P-018）。新的超时与单平台策略也从这次失败里得到验证：5 分钟暴露，不再挂一小时。
+- 第四次 Windows dry-run（run `41156918894`）已经走完构建、签名、验签与篡改对照，日志里每一步都通过，步骤却红在退出码 1：runner 的 `pwsh -command` 会把**最后一次原生命令**（按设计失败的 `signtool verify`）的退出码当成脚本退出码。现在这类"故意执行失败命令"的步骤末尾显式 `exit 0`（P-019）。
 - 换行规则补齐：`.gitattributes` 之前只强制脚本类文件用 LF，Windows 签出的 Go/TS/CSS/JSON 源码会变成 CRLF，导致本机 `prettier`、`gofmt` 全线误报。现在这些扩展名一律强制 LF，本地与 CI 看同一份字节。
-- 决策记录：[ADR-0018](docs/adr/ADR-0018-local-first-gate-and-on-demand-ci.md)；规范同步：[standards/02](docs/standards/02-git-workflow.md)、[standards/04](docs/standards/04-coding.md)；教训：P-016、P-017、P-018。
+- 决策记录：[ADR-0018](docs/adr/ADR-0018-local-first-gate-and-on-demand-ci.md)；规范同步：[standards/02](docs/standards/02-git-workflow.md)、[standards/04](docs/standards/04-coding.md)；教训：P-016、P-017、P-018、P-019。
 
 ---
 
