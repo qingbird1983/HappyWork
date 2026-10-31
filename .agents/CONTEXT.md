@@ -9,7 +9,7 @@
 - **Phase 3 ✅ 完成（tag `phase-3.end`）**：A1~A8 通过；CI run 41066195833 全绿；报告 [docs/design/phase-3/report.md](../docs/design/phase-3/report.md)。
 - **Phase 4 实现完成并已合并 main**（merge `94d576d`；分支期 `ci.yml` 三轮：两轮红在 P-013/P-014，第三轮 `41098214658` 全绿，main 上 `41102545807` 全绿）。A1~A4 通过；A5 真机待验；A6 已按 ADR-0018 收敛为"Windows 单平台 dry-run"，macOS dry-run 已在 run `41102612818` 绿过一次，Windows 待复跑（签名链路已本机跑通，只差安装包那一环）；A7 随首发延后。报告（草稿）见 [docs/design/phase-4/report.md](../docs/design/phase-4/report.md)。
 - **门禁机制已换（ADR-0018）**：日常验收 = 本机 `bash scripts/gate.sh --race`（本地与 CI 同一份脚本）；`ci.yml` 取消 push 触发，改手动/PR；`release.yml` dry-run 默认只跑 windows；全部 job 加 `timeout-minutes` + `concurrency`。
-- 分支：机制改造在 `fix/phase4-release-dry-run`；main 已含 Phase 4 实现。
+- 分支：Phase 4 实现与门禁机制改造都已在 main；A6 的 dry-run 取证直接在 main 上手动触发（`workflow_dispatch` 只认默认分支，P-015）。
 - 所有者决定（2026-10-31）：**暂不打 `v*` 标签、不发版**——UI 细设计打磨未完成；首发平台 **Windows 优先**，macOS/Linux 只保证"可构建 + 可签名 + 可验签"，不保证首发打磨度；**Actions 分钟是有额度的资源，不要每轮推送都跑远端 CI**。
 
 ## 上一轮完成了什么（3~5 条）
