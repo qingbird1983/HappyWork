@@ -7,7 +7,7 @@
 - **Phase 1 ✅ 完成（tag `phase-1.end`）**
 - **Phase 2 ✅ 完成（tag `phase-2.end`）**：8/8 验收，报告定稿，main CI 绿。
 - **Phase 3 ✅ 完成（tag `phase-3.end`）**：A1~A8 通过；CI run 41066195833 全绿；报告 [docs/design/phase-3/report.md](../docs/design/phase-3/report.md)。
-- **Phase 4 实现完成并已合并 main**（merge `94d576d`；分支期 `ci.yml` 三轮：两轮红在 P-013/P-014，第三轮 `41098214658` 全绿，main 上 `41102545807` 全绿）。A1~A4 通过；A5 真机待验；A6 已按 ADR-0018 收敛为"Windows 单平台 dry-run"，macOS dry-run 已在 run `41102612818` 绿过一次，Windows 待复跑（签名链路已本机跑通，只差安装包那一环）；A7 随首发延后。报告（草稿）见 [docs/design/phase-4/report.md](../docs/design/phase-4/report.md)。
+- **Phase 4 实现完成并已合并 main**（merge `94d576d`；分支期 `ci.yml` 三轮：两轮红在 P-013/P-014，第三轮 `41098214658` 全绿，main 上 `41102545807` 全绿）。A1~A4 通过；A5 真机待验；**A6 通过——Windows 单平台 dry-run 全绿（run `41157581586`）**，macOS dry-run 也曾在 run `41102612818` 绿过一次，Linux 按首发范围延后；A7 随首发延后；A8 门禁项全绿、待 A5 回填报告后勾选。报告见 [docs/design/phase-4/report.md](../docs/design/phase-4/report.md)。
 - **门禁机制已换（ADR-0018）**：日常验收 = 本机 `bash scripts/gate.sh --race`（本地与 CI 同一份脚本）；`ci.yml` 取消 push 触发，改手动/PR；`release.yml` dry-run 默认只跑 windows；全部 job 加 `timeout-minutes` + `concurrency`。
 - 分支：Phase 4 实现与门禁机制改造都已在 main；A6 的 dry-run 取证直接在 main 上手动触发（`workflow_dispatch` 只认默认分支，P-015）。
 - 所有者决定（2026-10-31）：**暂不打 `v*` 标签、不发版**——UI 细设计打磨未完成；首发平台 **Windows 优先**，macOS/Linux 只保证"可构建 + 可签名 + 可验签"，不保证首发打磨度；**Actions 分钟是有额度的资源，不要每轮推送都跑远端 CI**。
@@ -23,13 +23,13 @@
 - CI 复跑（run `41096410911`）仍红在 `check`：`database is locked (517/5)`。根因是 SQLite pragma 按连接生效而池子无上限，加上"消息序号 / 备份版本号"跨调用取最大值。已把连接池固定为 1、序号与版本分配并入插入事务，新增 4 写者 × 4 读者的并发回归测试（P-014）。
 - 按所有者要求**改门禁机制**（ADR-0018）：新增本地同源脚本 `scripts/gate.sh`（本地与 CI 跑同一份），`ci.yml` 去掉 push 触发、矩阵首发默认只 `windows`，`release.yml` dry-run 增加 `platforms` 选择并默认 `windows`，全部 job 补 `timeout-minutes` + `concurrency`；Windows dry-run 不再导入受信任根，改用内存临时证书 + `Get-AuthenticodeSignature` 断言。
 - 把 Windows 签名链路搬回本机并修到真能证明问题：`scripts/windows-sign-check.ps1` 只签 `bin\happywork.exe` 的副本，验签断言签名者指纹 + EKU，负向对照改为主体篡改且必须报 `TRUST_E_BAD_DIGEST (0x80096010)`（尾部篡改只破坏证书表，P-017）；顺带发现 PS 5.1 按行读 UTF-8 必须 `-Encoding UTF8`。
+- A6 远端取证收口：dry-run 连续暴露并修复 NSIS 的 PATH 不刷新（P-018）与 `pwsh -command` 退出码继承（P-019）后，run `41157581586` 全绿——`prepare` 2m09s、`windows` 3m45s，安装包生成、exe 与安装包双签名、指纹 + EKU 断言、主体篡改报 `0x80096010`、产物 `windows-dry-run-preview.zip` 上传；`release` job 未触发。
 - 又修掉一处真实缺陷：暂停路径先发状态后发事件，导致"会话暂停但看不到原因"的窗口；改为先发事件再翻状态，并在测试里固化事件顺序不变量（本机并发下先红后绿）。`.gitattributes` 补齐 go/ts/tsx/css/json/yml/md 等 `eol=lf`，消掉 Windows 上的 prettier/gofmt 误报与幻影 diff。
 
 ## 下一步（按优先级，注明阻塞项）
 
-1. **A5 真机验收（所有者）**：按 [docs/design/phase-4/a5-checklist.md](../docs/design/phase-4/a5-checklist.md) 在隔离 `APPDATA` 下走一遍——写文件审批 → 审计面板链状态/验证/导出（导出里不得出现工作区绝对路径与正文）→ 备份面板恢复（二次提示 + 安全副本）→ 撤销创建 → 运行中恢复被拒。
-2. **A6 Windows dry-run 复跑**（唯一剩下的取证动作）：把 `exit 0` 修复合并 main 后 `gh workflow run release.yml`（默认只跑 windows）。run `41156332487` 已确认单平台门控与 5 分钟快速失败；run `41156918894` 的日志已覆盖构建、签名、安装包、验签与篡改对照（全部通过），只差一次绿 run 收口——它红在 runner 的 `pwsh -command` 把负向对照的 `signtool verify` 退出码当成了步骤退出码（P-019，已修）。下一次要看到：`makensis` 找到并产出安装包、`signtool sign` 签 exe 与安装包、`Get-AuthenticodeSignature` 断言（签名者指纹 + EKU）、主体篡改副本报 `0x80096010`、产物上传，且整 run 绿。
-3. **A8 收尾**：Windows dry-run 绿 + A5 签收 → 报告定稿 → 看板勾 A5/A6/A8 → tag `phase-4.end`。**不打 `v*`**（发版另排）。
+1. **A5 真机验收（所有者）**：按 [docs/design/phase-4/a5-checklist.md](../docs/design/phase-4/a5-checklist.md) 在隔离 `APPDATA` 下走一遍——写文件审批 → 审计面板链状态/验证/导出（导出里不得出现工作区绝对路径与正文）→ 备份面板恢复（二次提示 + 安全副本）→ 撤销创建 → 运行中恢复被拒。桌面产物 `bin/happywork.exe` 保持未签名，供此次真机使用。
+2. **A8 收尾**：A5 签收 → 报告回填 A5 证据并定稿 → 看板勾 A5/A8 → tag `phase-4.end`。**不打 `v*`**（发版另排）。
 4. **A7 条件项（随首发排期主动延后）**：所有者提供 Windows PFX、Apple Developer ID/公证、Linux GPG 私钥与 Key ID 后配成 GitHub Secrets，补跑正式签名并回填证书主体/指纹证据。
 5. 可选真机补录（Phase 3 遗留）：持久短语与 secret-scan 的 GUI 提交（宿主安全分类器限制，集成测试已覆盖）。
 6. UI 细设计与打磨（含审计/备份面板灰盒样式）按所有者决定排在发版之前，Phase 4 不强行收尾。
@@ -38,7 +38,7 @@
 
 - **"每轮推送都有远端 CI"这一保证已取消**（ADR-0018 的代价）：远端只在里程碑/手动触发时跑。合并 main 前的绿=本机 `gate.sh --race` 的绿；若哪天要恢复严格性，改 `ci.yml` 的 `on:` 即可，但要先想清楚额度。
 - **Linux 包签名当前不可用**：`ubuntu-latest`（Ubuntu 26.04）镜像里没有 `dpkg-sig`，`linux` job 一跑就红。按首发范围它现在不会被触发；真要支持 Linux 时需重做 deb/rpm 签名方式（分离签名或钉镜像版本）。
-- 本机**有** Windows SDK 的 `signtool`（签名/验签已用 `scripts/windows-sign-check.ps1` 在本地跑通），但**没有 `makensis`**：安装包那一步只能在远端验证，所以 A6 的 Windows 部分仍需至少一次远端绿。
+- 本机**有** Windows SDK 的 `signtool`（签名/验签已用 `scripts/windows-sign-check.ps1` 在本地跑通），但**没有 `makensis`**：安装包那一步只能在远端验证。A6 的远端 Windows 绿已拿到（run `41157581586`）；若以后改用真实证书，安装包链路仍需在 A7 重验一次。
 - **`wails3 tool sign` 在 Windows 上是空实现**（本机实测报 `built-in Windows signing not yet implemented`）；流水线已改为直接调 `signtool sign`。help 里列出的命令不等于实现了（P-012 复发记录）。
 - 真实签名凭据是否存在（A7 阻塞项）。
 - 审计链威胁模型已写进 UI 与文档：本地完整性护栏，不防全权限重算，无外部锚定。

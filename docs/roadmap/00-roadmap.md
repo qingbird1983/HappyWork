@@ -24,7 +24,7 @@ graph LR
 | [Phase 1](phase-1-minimal-skeleton.md) | 最小骨架：Wails 壳 + SQLite + mock 模型 + 只读工具 + 单实例锁 | 1~2 周 | ✅ 完成（2026-10-30，tag `phase-1.end`；[报告](../design/phase-1/report.md)） |
 | [Phase 2](phase-2-controlled-execution.md) | 受控执行闭环：Actor 状态机 + DeepSeek + 本地工具 + MCP stdio + 审批交互 + 渲染安全 | 2~3 周 | ✅ 完成（2026-10-30，tag `phase-2.end`；[报告](../design/phase-2/report.md)） |
 | [Phase 3](phase-3-permission-engine-and-hooks.md) | 权限引擎（映射表/双指纹/路径规范化）+ 进程内 Hook + TOCTOU 管道 | 2 周 | ✅ 完成（2026-10-30，tag `phase-3.end`；[报告](../design/phase-3/report.md)） |
-| [Phase 4](phase-4-audit-rollback-signing.md) | 加固 a：不可变审计 + 备份式回滚 + 三平台签名 CI | 2 周 | 进行中（实现完成，本地 + `ci.yml` 全绿；A5 真机与 A6 dry-run 待验收；首发 Windows 优先、`v*` 发布延后） |
+| [Phase 4](phase-4-audit-rollback-signing.md) | 加固 a：不可变审计 + 备份式回滚 + 三平台签名 CI | 2 周 | 进行中（实现完成，本地 + `ci.yml` 全绿；A6 Windows dry-run 已绿 run `41157581586`；A5 真机与 A8 收尾待办；首发 Windows 优先、`v*` 发布延后） |
 | Phase 5 | 加固 b：OS 沙箱（macOS Seatbelt + Linux Landlock） | 3~6 周 | 未开始 |
 
 \* 单人参考值，仅量级感知。状态取值：未开始 / 进行中 / ✅ 完成（日期 + tag）。
