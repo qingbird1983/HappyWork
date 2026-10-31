@@ -1,7 +1,7 @@
 # Phase 4 验收报告：不可变审计 + 备份式回滚 + 三平台签名 CI
 
-- 状态：实现完成；本地门禁与远端 `ci.yml`（分支 + main）全绿；**A6 Windows 单平台 dry-run 已绿（run `41157581586`）**；A5 真机待验；A8 门禁项全绿、报告待 A5 回填后定稿；macOS/Linux 按首发范围延后；`v*` 发版按所有者决定另排
-- 日期：2026-10-30 初稿；2026-10-31 更新 A6 证据
+- 状态：**Phase 4 验收完成（tag `phase-4.end`）**：A1~A6、A8 通过（A5 为所有者授权的代跑，2026-10-31）；A7 条件项随首发延后；macOS/Linux 只保证"可构建 + 可签名 + 可验签"；`v*` 发版按所有者决定另排
+- 日期：2026-10-30 初稿；2026-10-31 更新 A6 证据与 A5 代跑结果
 - 范围合同：[phase-4-audit-rollback-signing.md](../../roadmap/phase-4-audit-rollback-signing.md)
 - 设计与决策：[design.md](design.md)、[release-signing.md](release-signing.md)、[ADR-0015](../../adr/ADR-0015-immutable-audit-chain.md)、[ADR-0016](../../adr/ADR-0016-versioned-backup-restore.md)、[ADR-0017](../../adr/ADR-0017-release-signing.md)
 
@@ -25,10 +25,10 @@
 | A2 覆盖与导出 | 通过（自动化） | `TestPhase4AuditCoversWriteApprovalAndBackup`（判定 `tool_call/ask` + `approval/allow` + `backup/create` 同链）、`TestPhase4ExportAndVerifyChain`（导出行数与链一致、不含工作区绝对路径与文件正文）、`TestExportEvidence`（JSONL 复算 + manifest 一致）、`TestHookPatchesWriteAndAudits`、`TestBoundaryDenialAudited`、`TestPhase4AuditFailureBlocksAllow`（审计写失败时放行被拒） |
 | A3 备份版本与恢复 | 通过（自动化 + 会话级集成） | `TestWriteCreateOverwriteVersions`、`TestWriteRetentionPrunes`、`TestWriteQuotaRefusesOverwrite`、`TestRestoreCreatesSafetyCopyAndCanBeUndone`、`TestRestoreRecreatesDeletedFile`、`TestFileBackupRoundtrip`；新增 `TestPhase4RestoreFlowWithSafetyCopy`（恢复→安全副本→再恢复回 v2，两次 `backup/restore` 审计）、`TestPhase4RestoreRejectedWhileRunning`（运行中 `ErrBusy`，空闲后成功） |
 | A4 新建撤销与写后校验 | 通过（自动化） | `TestUndoCreate`、`TestUndoCreateRejectsModified`、`TestPhase4UndoCreatedFileMovesToBackupArea`（撤销后工作区文件消失、内容在 `backups/<session>/discarded/...trash` 可读、审计 `backup/undo_create`）、`TestVerifyFailureRollsBack`、`TestVerifyFailureOnCreateDiscards`（故障注入自动回滚/移入备份区并审计 `backup/verify_fail`）、`TestWriteRejectsSensitiveAndTraversal` |
-| A5 UI/API | 部分：自动化通过，真机待验 | 前端 `render.test.tsx` 21 用例全绿，含新增审计/备份面板注入用例（恶意 `decision` 只能落到 `other` 类名、路径与原因转义、破损横幅显示首个坏行、运行中恢复按钮 `disabled`、二次确认文案）；`npm run lint/typecheck/format:check/test:unit/build` 全绿，App.tsx 568 行（<600）。**待所有者真机验收**：面板打开、链状态与导出文件、恢复/撤销交互与运行中提示 |
+| A5 UI/API | **通过（代跑，2026-10-31）** | 所有者授权后，在隔离数据目录 `D:\hw-a5\appdata` + 工作区 `D:\hw-a5\ws` 用真实 GUI 走完清单（`docs/design/phase-4/a5-checklist.md`）：① 审批弹窗显示相对路径 `note.txt`，内容预览 `第一版`；② 审计面板「链状态：完整 · 密封 17 条 · 遗留 0 条」，`验证整链` 提示通过；③ 三次导出（3/16/17 条）均无绝对路径、文件正文或盘符，manifest `ok/headMatch` 为真；④ 备份面板列出 note.txt 的 v1 新建 / v2 覆盖 / v3 安全副本 / v4 覆盖与 tmp.txt；恢复 v2 后内容回到「第一版」并新增安全副本；⑤ 撤销创建 tmp.txt 后工作区消失、`backups/<sessionID>/discarded/tmp.txt/…trash` 保留 13 B 原文，审计新增 `backup/undo_create`；⑥ 运行中提示为「会话正在运行；请先停止，再恢复或撤销创建。」且按钮置灰。**真机发现一个缺陷：安全副本显示「未确认」且没有恢复按钮（无法撤销恢复）**，已按 ADR-0016 修复并加前端回归测试（§4.19，P-020）；修复后实测恢复安全副本可把内容退回「第二版」。前端 22 用例全绿 |
 | A6 签名 dry-run | **通过（Windows，run `41157581586`）**；macOS 远端早已绿；Linux 按首发范围延后 | 取证只能在默认分支触发（P-015）。前四次失败依次暴露并修复：证书存储挂死（§4.10，P-016）、`wails3 tool sign` 在 Windows 未实现（§4.13）、PowerShell 语法（§4.14）、尾部篡改的假负向对照（§4.15，P-017）、NSIS 的 PATH（§4.16，P-018）、`$LASTEXITCODE` 退出码（§4.17，P-019）。最终 run `41157581586`（main，`workflow_dispatch`，默认 `platforms=windows`）：`prepare` 2m09s 绿、`windows` 3m45s 绿、macOS/Linux/release 按门控跳过（§4.18）。日志证据：`makensis` 找到并生成 `happywork-amd64-installer.exe`；`signtool sign` 成功签 `bin\happywork.exe` 与安装包；两个产物 `Get-AuthenticodeSignature` 均为 `UnknownError` + 临时证书指纹 `EDE675E953E1AB27E4FF44E9155458CE5BEAA9F3` + 代码签名 EKU；负向对照两次 `verify exit=1` 且命中 `0x80096010`；产物 `windows-dry-run-preview.zip`（15,338,322 字节，ID 13026277031）上传成功。**验收范围随 ADR-0018 收窄为 Windows dry-run 三件事：构建、签名、验签——本次全部成立。** |
 | A7 真实签名（条件） | 未执行（条件遗留） | 需要所有者提供 Windows Authenticode 证书、Apple Developer ID + 公证账号、Linux GPG 私钥与密钥 ID 并配置为 GitHub Actions Secrets。未提供前只记"条件未执行"，不伪造证据 |
-| A8 门禁 | 部分：门禁项全绿；报告待 A5 回填后定稿 | 本地 `bash scripts/gate.sh --race` 全绿（fmt/build/vet/lint/test/前端四门/渲染安全/体量）；远端 `ci.yml` run `41098214658`、`41102545807` 全绿；首发平台 `wails3 build` 与 Windows release dry-run 全绿（run `41157581586`）。看板 A8 里"release dry-run CI 全绿"这一项按 ADR-0018 收敛为 **Windows 单平台 dry-run 绿**，其余平台延后不算失败；只剩 A5 真机证据回填与报告定稿 |
+| A8 门禁 | **通过（2026-10-31）** | 本地 `bash scripts/gate.sh --race` 全绿（fmt/build/vet/lint/test/前端四门/渲染安全/体量）；远端 `ci.yml` run `41098214658`、`41102545807` 全绿；首发平台 `wails3 build` 与 Windows release dry-run 全绿（run `41157581586`）；A5 代跑结果已回填本报告并定稿。看板 A8 里"release dry-run CI 全绿"按 ADR-0018 收敛为 **Windows 单平台 dry-run 绿**，其余平台延后不算失败 |
 
 ## 3. 本地门禁结果（2026-10-30 首次；2026-10-31 复跑见表末）
 
@@ -72,12 +72,13 @@
 16. **第三次 dry-run（run `41156332487`）：NSIS 装上了，但后续步骤 PATH 没刷新**。这次运行 5 分 36 秒结束（`prepare` 2m33s 绿、`windows` 2m50s 红、linux/macos 按 `platforms=windows` 跳过），失败点是 `windows:create:nsis:installer` 报 `"makensis": executable file not found in $PATH`；而前一步 `choco install nsis` 的日志明确写着部署到 `C:\Program Files (x86)\NSIS`。根因是 choco 改的是注册表 PATH，runner agent 的环境快照不会刷新（P-018）。修复：安装步骤显式定位 `makensis.exe` 并写入 `$GITHUB_PATH`，找不到即失败。这次失败也验证了新的成本防线——5 分钟显式失败，没有再挂一小时。
 17. **第四次 dry-run（run `41156918894`）：签名与验签全部通过，步骤却以退出码 1 结束**。这次走到了最后：NSIS 生成 `happywork-amd64-installer.exe`、`signtool sign` 签了 exe 与安装包、`Get-AuthenticodeSignature` 在两个产物上都拿到 `UnknownError` + 临时证书指纹、负向对照两次都 `verify exit=1`，还打印了"dry-run 验签通过"。但步骤仍红在 `Process completed with exit code 1`——根因是 runner 用 `pwsh -command ". '{0}'"`，脚本正常结束时把最后一次原生命令（负向对照里按设计失败的 `signtool verify`）的退出码当成了进程退出码（P-019）。修复：在故意执行失败命令的脚本末尾显式 `exit 0`。**A6 的三件事（构建、签名、验签）在这一次的日志证据里都已成立，还差同一份修复后的一次绿 run 作为正式取证。**
 18. **第五次 dry-run（run `41157581586`）全绿，A6 取证完成**。`prepare` 2m09s、`windows` 3m45s、`macos`/`linux`/`release` 按 `platforms=windows` 跳过，整 run `success`。关键日志：NSIS 安装后 `makensis` 可执行（`GITHUB_PATH` 生效）；`Successfully signed: bin\happywork.exe` 与 `Successfully signed: ...\happywork-amd64-installer.exe`；两个产物均 `status=UnknownError signer=EDE675E953E1AB27E4FF44E9155458CE5BEAA9F3`（临时证书指纹），EKU 断言通过；负向对照两次 `verify exit=1` 且脚本未报"缺 0x80096010"，即摘要错误被确认；产物 `windows-dry-run-preview.zip`（15,338,322 字节，Artifact ID 13026277031）上传成功。至此 A6 按 ADR-0018 收窄后的"构建、签名、验签"三件事全部有远端证据，且没有触发 `release` job（手动触发永不发布）。
+19. **A5 代跑抓到安全副本不可恢复的 UI 缺陷**。所有者 2026-10-31 授权代跑后，在隔离目录走完清单。恢复 v2 后，安全副本 v3 在备份面板显示「未确认」且没有「恢复」按钮——而 ADR-0016 明确写着"恢复本身可再恢复/撤销"。根因：`makeBackup` 创建安全副本时没有写 `verified_at`（它本来就没有"写入后校验"这一步），前端 `canRestore` 只检查 `verified_at`，于是把安全副本判成不可用；后端 `Restore` 其实不要求该字段。处置：前端把 `reason=pre_restore` 且带 `backupRel` 的安全副本视为可恢复，并把标签改成「安全副本」；先加会红的前端用例（`offers the pre-restore safety copy as a restore source`，修复前实际渲染为「未确认」且无按钮），修后 22 个前端用例全绿。修复后用真实 GUI 再点一次安全副本的恢复：`note.txt` 从「第一版」退回「第二版」，原安全副本变为「已恢复/已撤销」，新安全副本带恢复按钮。另观察到：自动化鼠标点击确认按钮两次未触发、键盘激活正常（先记自动化坐标待复核）；模型在总结时误称 `note.txt` 为「第二版」（实际「第一版」，模型未重读文件，不是 UI 缺陷）。
 
 ## 5. 遗留与后续
 
-- **A5 真机验收**：所有者在隔离 `APPDATA` 下走一遍——写文件审批→审计面板看链状态→导出 JSONL/manifest→备份面板恢复与撤销创建→运行中尝试恢复看提示。
+- **A5 真机验收（已完成，代跑）**：2026-10-31 由 AI 在所有者授权下按 [a5-checklist.md](a5-checklist.md) 走完；结果见 §2 A5 与 §4.19。真机抓到的安全副本缺陷已修复并复验；可选的第 9 步（运行中强杀进程）未执行，留作回归时补。
 - **A6 远端 dry-run（已完成）**：Windows 单平台 dry-run 在 run `41157581586` 全绿（§4.18），取证链路见 §2 A6 行。macOS 的 ad-hoc dry-run 在 run `41102612818` 已绿过一次；Linux 的 `dpkg-sig` 不可用与 macOS/Linux 的签名打磨按首发范围延后，不算失败。
-- **A8 收尾**：门禁项已全绿（本地 `gate.sh --race`、`ci.yml`、Windows dry-run）；A5 真机签收后回填报告并勾选看板 A8，然后打 `phase-4.end`（不打 `v*`）。
+- **A8 收尾（已完成）**：门禁项全绿（本地 `gate.sh --race`、`ci.yml`、Windows dry-run），A5 证据已回填本报告，看板 A5/A8 已勾选，tag `phase-4.end`（不打 `v*`）。
 - **发版排期（所有者 2026-10-31 决定）**：UI 细设计与打磨未完成，本期**不打 `v*` 标签、不发版**；首发平台 Windows 优先，macOS/Linux 的验收标准只是"可构建、可签名、可验签"，不承诺首发打磨度。
 - **A7 真实签名**：随上面的排期决定主动延后；等凭据到位后补跑并回填证据（证书主体、GPG 指纹）。
 - **不自动改写构建资产**：`check-version.sh` 只检测不修复，版本变更必须是一次显式提交。

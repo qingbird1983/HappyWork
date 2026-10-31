@@ -17,18 +17,31 @@ function formatBytes(value: number): string {
   return `${(value / (1024 * 1024)).toFixed(1)} MiB`;
 }
 
+// A pre_restore safety copy is hashed when it is copied and that hash is
+// rechecked before restoring, so it is restorable even though no write ever
+// set verified_at on it (ADR-0016: a restore itself can be undone).
+function isSafetyCopy(backup: FileBackup): boolean {
+  return backup.reason === "pre_restore" && !!backup.backupRel && !backup.restoredAt;
+}
+
 // backupLabel describes whether a version is usable. An overwrite without
-// verified_at never passed the post-write hash check, so it is not offered.
+// verified_at never passed the post-write hash check, so it is not offered --
+// except a pre_restore safety copy, which has no post-write check to pass.
 function backupLabel(backup: FileBackup): string {
   if (backup.restoredAt) return "已恢复/已撤销";
   if (backup.kind === "create" && !backup.writtenSha256) return "未完成";
-  if (backup.kind === "overwrite" && !backup.verifiedAt) return "未确认";
+  if (backup.kind === "overwrite" && !backup.verifiedAt) {
+    return isSafetyCopy(backup) ? "安全副本" : "未确认";
+  }
   return "可用";
 }
 
 export function canRestore(backup: FileBackup): boolean {
   return (
-    backup.kind === "overwrite" && !!backup.backupRel && !!backup.verifiedAt && !backup.restoredAt
+    backup.kind === "overwrite" &&
+    !!backup.backupRel &&
+    !backup.restoredAt &&
+    (!!backup.verifiedAt || isSafetyCopy(backup))
   );
 }
 
