@@ -58,22 +58,32 @@ jobs:
 | `WINDOWS_PFX_PASSWORD` | PFX 密码 | 正式发布 |
 | `WINDOWS_TIMESTAMP_URL` | RFC 3161 时间戳 URL（如 DigiCert） | 可选；默认使用平台推荐值 |
 
-证书文件只在 runner 临时目录解码（`0600` 等价权限），任务结束删除；不得 `echo` 证书/密码，不得上传证书文件。dry-run 使用 PowerShell 生成自签证书并导入当前用户 Trusted Root，仅用于验签。
+证书文件只在 runner 临时目录解码（`0600` 等价权限），任务结束删除；不得 `echo` 证书/密码，不得上传证书文件。dry-run 的自签证书只在 PowerShell 内存里构造并导出到 `$RUNNER_TEMP`，**不写任何证书存储**（导入受信任根会在无人值守 runner 上弹确认框并挂死，见 P-016）。
 
 ### 4.2 步骤
 
+> **实测纠正（2026-10-31）**：Wails v3.0.0 的 `wails3 tool sign` **在 Windows 上尚未实现**（本机执行报 `built-in Windows signing not yet implemented - please use signtool.exe`；Linux 的 dpkg-sig/rpmsign 与 macOS 的 codesign 都有实现，唯独 Windows 没有）。因此第 2、4 步直接调用 SDK 的 `signtool.exe`，不再经过 Wails。整条链路可在本机零额度验证：`powershell -File scripts\windows-sign-check.ps1`。
+
 1. `wails3 build` 生成 `bin/happywork.exe`；`makensis` 缺失时先 `choco install nsis`。
-2. `wails3 tool sign --input bin/happywork.exe --certificate "$RUNNER_TEMP/happywork-signing.pfx" --password <口令> --timestamp <URL>`。
+2. `signtool sign /fd SHA256 /f <pfx> /p <口令> /tr <RFC3161 URL> /td SHA256 /d "HappyWork" bin\happywork.exe`（`signtool` 由 `${ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\` 探测，找不到即失败）。
 3. `wails3 task windows:create:nsis:installer` 生成 `bin/happywork-<arch>-installer.exe`。
-4. 对安装包执行同一签名命令。
-5. `signtool verify /pa /all bin\happywork.exe` 与安装包（`bin\happywork-*-installer.exe`）；失败即 job 失败。
+4. 对安装包执行同一条 `signtool sign`。
+5. 验签：正式标签用 `signtool verify /pa /all`（exe 与安装包都要过）；dry-run 因为证书是自签、不在公共信任链里，改用 `Get-AuthenticodeSignature` 断言"签名存在 + 签名者指纹匹配 + 具备代码签名 EKU"，并用 `signtool verify` 对一份**主体被篡改**的副本断言必须报 `TRUST_E_BAD_DIGEST (0x80096010)`（详见 §4.3）。
 6. 上传 exe 与安装包；SHA-256 清单由 `release` job 统一生成（见 §7），避免各平台各出一份再合并时对不上。
 
 ### 4.3 dry-run
 
 - 临时证书**只在内存里构造**：`CertificateRequest`（RSA 2048 + SHA-256 + 代码签名 EKU `1.3.6.1.5.5.7.3.3`）→ `CreateSelfSigned` → 导出 PFX 到 `$RUNNER_TEMP`。全程**不写任何证书存储**。
-- 签名仍然走真实命令：`wails3 tool sign --input bin/happywork.exe --certificate <临时pfx> --password <口令> --timestamp <URL>`，安装包同样处理。
-- 验签在 dry-run 路径改用 `Get-AuthenticodeSignature`，断言四件事：签名存在、签名者指纹等于本次生成的临时证书、具备代码签名 EKU、状态只允许 `Valid` 或 `NotTrusted`（自签证书不在公共信任链里，`NotTrusted` 是预期结果；`HashMismatch`/`NotSigned` 才说明流水线坏了）。`signtool verify /pa /all` 只在真实证书（正式标签）路径执行。
+- 签名走真实命令 `signtool sign /fd SHA256 /f <临时pfx> /p <口令> /tr <URL> /td SHA256`，exe 与 NSIS 安装包都要签。**不能用 `wails3 tool sign`：Wails v3.0.0 在 Windows 上没实现这条命令**，本机执行直接报 `built-in Windows signing not yet implemented - please use signtool.exe`（见 §4.2 与 P-012 复发记录）。
+- 验签在 dry-run 路径用 `Get-AuthenticodeSignature`，判据来自本机实测：
+  - **"有没有签名"只看 `SignerCertificate` 是否非空**。本机实测自签证书的状态是 `UnknownError`，未签名文件是 `NotSigned` **且没有签名者证书**；状态词（尤其是本地化的 `StatusMessage`）不作为存在性判据；
+  - 签名者指纹必须等于本次生成的临时证书；
+  - 证书必须带代码签名 EKU（按 OID 判定）；
+  - **篡改负向对照必须篡改镜像主体（25% 处），并只认摘要错误码 `0x80096010`（`TRUST_E_BAD_DIGEST`）**。实测对照：改主体字节 → 状态 `HashMismatch`、`signtool verify` 报 `0x80096010`；改文件**尾部** → 那是在破坏 PKCS#7 证书表本身，文件退化成 `NotSigned`/链错误，摘要根本没被比对，**不能**算"篡改被拒绝"的证据。`signtool` 的错误码不受系统语言和 .NET 版本影响，所以 workflow（pwsh 7）与本地脚本（Windows PowerShell 5.1）共用同一判据。
+  `signtool verify /pa /all` 只在真实证书（正式标签）路径执行；dry-run 只在负向对照这一步调用 `signtool verify`，且不要求它退出 0。
+- PowerShell 写法两处坑：多参构造必须用 `[Type]::new(...)`（`New-Object Type(a, b)` 会报 `Missing ')' in method call`，run `41118979006` 就红在这）；`X500DistinguishedName` 的命名空间是 `System.Security.Cryptography.X509Certificates`，不是 `System.Security.Cryptography`。
+- 本地脚本签名的是 `bin\happywork.exe` 的**副本**：原件必须保持未签名，A5 真机验收要的正是这份原件。工作目录用完即删。
+- 用 Windows PowerShell 5.1 按行解析 UTF-8 文件时必须显式 `-Encoding UTF8`：默认按 ANSI（936）解码时，多字节序列会吞掉后面的换行，实测把 644 行读成 594 行，按行做 YAML/脚本结构检查会整段错位（P-016 预防清单）。
 - 为什么不再走 `/pa`：原设计"导入 `Cert:\CurrentUser\Root` 后让 `signtool /pa` 验真链路"在无人值守 runner 上会弹出系统确认对话框，**没有任何输出地挂死 63 分钟**才被平台掐掉（run `41102612818`，约 133 分钟 Windows 额度）——见 P-016 与 [ADR-0018](../../adr/ADR-0018-local-first-gate-and-on-demand-ci.md)。
 - EKU 判定用 OID 而非 `FriendlyName`：后者随系统显示语言变化（中文 Windows 上是"代码完整性"），拿它断言会造成假失败。
 - 临时证书只存在 runner；dry-run 产物标签为 `dry-run-preview`，`release` job 只下载 `*-release`，因此不可能被误发布。

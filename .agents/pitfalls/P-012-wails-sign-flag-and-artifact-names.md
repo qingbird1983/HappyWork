@@ -26,7 +26,11 @@
 
 ##（如复发）再次发生记录
 
-- （无）
+- **2026-10-31 同一坑的第二击，更严重**：本机跑 `wails3 tool sign --input bin/happywork.exe --certificate x.pfx --password ...` 直接报
+  `ERROR built-in Windows signing not yet implemented - please use signtool.exe on Windows, or install osslsigncode`
+  ——**Wails v3.0.0 的 `tool sign` 在 Windows 上根本没实现**（Linux 走 dpkg-sig/rpmsign、macOS 走 codesign 都实现了，唯独 Windows 没有）。发布流水线里所有 `wails3 tool sign` 的 Windows 调用都是死路，远端跑多少次都白跑。
+  处置：`release.yml` 的 Windows 签名步骤改为直接调用 SDK 的 `signtool.exe sign /fd SHA256 /f <pfx> /p <口令> /tr <时间戳> /td SHA256`，并用 `scripts/windows-sign-check.ps1` 在本机把"临时证书 → 签名副本 → 验签（指纹/EKU）→ 主体篡改报 `0x80096010`"整条链路验证通过（零 Actions 分钟）。
+  教训升级：**help 文本之外，"命令是否实现"也必须实测**。上次是参数语义错，这次是功能压根不存在——只看 `--help` 有这一项，不足以证明它能用。
 
 ## 归属
 

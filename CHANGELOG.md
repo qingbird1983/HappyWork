@@ -14,11 +14,13 @@
 - 新增一条命令跑全部日常门禁：`bash scripts/gate.sh`（可选 `--race`、`--build`、`--skip-lint`）。本地和远端 CI 现在跑的是**同一份脚本**，不再各写一套命令导致漂移；日常验收在本机（本来就是 Windows）完成，不花额度。
 - `ci.yml` 去掉"每次推送都跑"的触发，改为手动触发 + PR；构建矩阵默认只含首发平台 Windows，macOS/Linux 需显式勾选。`release.yml` 的 dry-run 同样默认只跑 Windows。**正式标签 `v*` 仍然三平台齐跑、缺一个就失败，发布标准没有放宽。**
 - 所有 CI job 加上超时上限，两条流水线都加"同一分支重复触发自动取消旧运行"。今后再有步骤卡住，最多几十分钟就会被掐掉，不会再悄悄烧一小时。
-- Windows 的 dry-run 验签换成不弹窗的做法：证书只在内存里临时生成，验签检查"签名存在 + 签名者就是这张临时证书 + 具备代码签名用途 + 文件哈希一致"；`signtool` 的真实信任链校验只在有正式证书时执行。
+- Windows 的 dry-run 验签换成不弹窗的做法：证书只在内存里临时生成，验签检查"签名存在 + 签名者就是这张临时证书 + 具备代码签名用途 + 文件被改过必须报哈希不匹配"；`signtool` 的真实信任链校验只在有正式证书时执行。
 - Linux 的包签名步骤当前不可用（`ubuntu-latest` 已升级到 Ubuntu 26.04，镜像里没有 `dpkg-sig`），按"首发 Windows 优先"的决定登记为延后项，不算失败。
 - 顺带修掉一个真实的行为缺陷：会话"暂停"时先改状态、后发通知，界面可能读到"已暂停"却看不到暂停原因。现在先发通知再改状态，并有测试固化这个顺序。
+- 本机实测发现：Wails v3.0.0 的 `wails3 tool sign` **在 Windows 上没有实现**（直接报 "built-in Windows signing not yet implemented"），原流水线的 Windows 签名步骤无论怎么跑都会失败。已改为直接调用 Windows SDK 的 `signtool sign`，并新增 `scripts/windows-sign-check.ps1`：在本机几十秒、零额度地走完"临时证书 → 签名副本 → 验签 → 主体篡改必须报摘要错误"四步；判断"文件到底签没签"不能看状态词（自签证书报 `UnknownError`，未签名文件报 `NotSigned` 且没有签名者证书），要看是否存在签名者证书。
+- 负向对照第一版是假的，本机复跑才发现：改文件**尾部**只是破坏签名容器，得到的 `NotSigned`/链错误不能证明内容被比对过。现在改为改镜像主体，并要求 `signtool` 明确返回 `TRUST_E_BAD_DIGEST (0x80096010)`——错误码与系统语言、.NET 版本无关（P-017）。同时补了一条纪律：PowerShell 5.1 按行读 UTF-8 文件必须显式 `-Encoding UTF8`，否则默认 ANSI 解码会吞换行（实测 644 行读成 594 行）。
 - 换行规则补齐：`.gitattributes` 之前只强制脚本类文件用 LF，Windows 签出的 Go/TS/CSS/JSON 源码会变成 CRLF，导致本机 `prettier`、`gofmt` 全线误报。现在这些扩展名一律强制 LF，本地与 CI 看同一份字节。
-- 决策记录：[ADR-0018](docs/adr/ADR-0018-local-first-gate-and-on-demand-ci.md)；规范同步：[standards/02](docs/standards/02-git-workflow.md)、[standards/04](docs/standards/04-coding.md)；教训：P-016。
+- 决策记录：[ADR-0018](docs/adr/ADR-0018-local-first-gate-and-on-demand-ci.md)；规范同步：[standards/02](docs/standards/02-git-workflow.md)、[standards/04](docs/standards/04-coding.md)；教训：P-016、P-017。
 
 ---
 

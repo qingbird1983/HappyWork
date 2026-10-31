@@ -26,12 +26,16 @@
 |---|---|---|
 | 每轮提交前（默认） | `bash scripts/gate.sh --race` | 本机就是目标平台（Windows），零成本；**这是日常的事实来源** |
 | 本机功能验证 | `bash scripts/gate.sh --build` | 追加当前平台 `wails3 build` |
+| Windows 发布链路 | `powershell -File scripts\windows-sign-check.ps1`（可加 `-TimestampUrl`） | 内存临时证书 → `signtool sign` 签**副本** → `Get-AuthenticodeSignature` 验身份/EKU → 主体篡改必须报 `TRUST_E_BAD_DIGEST (0x80096010)`，几十秒零额度；不改动待验收的 `bin\happywork.exe`；`makensis` 只有 runner 有，安装包那步仍需远端 |
 | 里程碑（合并 main 前、发版前） | 远端 `CI` workflow `workflow_dispatch` | 独立机器复核；矩阵首发只有 `windows` |
 | 正式标签 `v*` | 远端 `Release` workflow | 三平台齐跑、缺任一即失败，不因 ADR-0018 放宽 |
 
 - `ci.yml` **不再有 push 触发**：Actions 分钟按 Linux 1× / Windows 2× / macOS 10× 计费，每轮推送三平台既不必要也贵（一次实跑教训：无 `timeout-minutes` 的挂死步骤白烧约 133 分钟额度，见 P-016）。
 - 因此"main 绿"不再是自动事实：合并 main 之前必须自己确认本地 `gate.sh --race` 全绿，合并后手动 dispatch 一次远端 CI 作为里程碑证据。
 - 每个 job 必须有 `timeout-minutes`；workflow 必须有 `concurrency` + `cancel-in-progress`。缺任何一条视为流水线缺陷，不合并。
+- **推远端之前先在本地复现同类命令**：workflow 里每个 `pwsh` 步骤都要能用 PowerShell 的 AST 解析器（`Parser::ParseFile`）通过语法检查，签名/验签一类能在本机做的要先用 `windows-sign-check.ps1` 跑通。本项目两次远端失败（证书存储弹窗挂死、`New-Object` 语法错误）都属于"本机本可发现"。用 PS 5.1 按行解析 UTF-8 文件时必须加 `-Encoding UTF8`，否则默认 ANSI 解码会吞换行（实测 644 行读成 594 行）。
+- **负向对照要打中真正的检查点**：证明"篡改会被拒"必须篡改镜像主体并从 `signtool` 拿到摘要错误码 `0x80096010`；篡改文件尾部只是破坏证书表，得到的 `NotSigned`/链错误证明不了摘要比对（P-017）。
+- **第三方 CLI 的能力边界必须实测**，`--help` 列出不代表已实现：`wails3 tool sign` 在 Windows 上就是空实现（P-012 复发记录）。
 
 ## 2. 错误处理
 

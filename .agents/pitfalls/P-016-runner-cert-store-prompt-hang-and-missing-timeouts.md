@@ -15,7 +15,7 @@ Phase 4 的 A6 dry-run（run `41102612818`）跑了 **1 小时 8 分钟**：`pre
 
 ## 修复（机制层面，见 ADR-0018）
 
-- **Windows dry-run 不再触碰任何证书存储**：自签证书在内存里用 `CertificateRequest` 生成后直接导出 PFX；验签改为 `Get-AuthenticodeSignature`，断言"签名存在 + 签名者就是这张临时证书 + 具备代码签名 EKU + 状态只允许 `Valid`/`NotTrusted`"。`signtool verify /pa /all` 只在真实证书（正式标签）路径执行。EKU 判断按 OID `1.3.6.1.5.5.7.3.3`，**不用 `FriendlyName`**——后者是本地化字符串，中文系统上会变。
+- **Windows dry-run 不再触碰任何证书存储**：自签证书在内存里用 `CertificateRequest` 生成后直接导出 PFX；验签改为 `Get-AuthenticodeSignature`，断言"签名存在（看 `SignerCertificate` 是否非空，状态词不作判据：自签证书是 `UnknownError`，未签名文件是 `NotSigned` 且无签名者）+ 签名者就是这张临时证书 + 具备代码签名 EKU"。篡改负向对照见 P-017。`signtool verify /pa /all` 只在真实证书（正式标签）路径执行。EKU 判断按 OID `1.3.6.1.5.5.7.3.3`，**不用 `FriendlyName`**——后者是本地化字符串，中文系统上会变。
 - **每个 job 都有 `timeout-minutes`**（plan 5 / check 20 / build 20 / prepare 20 / windows 25 / macos 30 / linux 25 / release 15），两个 workflow 都加 `concurrency` + `cancel-in-progress`。
 - **`ci.yml` 取消 push 触发**，改 `workflow_dispatch`（平台可选，默认只 `windows`）+ 指向 main 的 PR；日常门禁搬到本地同源脚本 `bash scripts/gate.sh --race`。
 - **`.gitattributes` 补齐 `eol=lf`**（go/ts/tsx/js/css/json/yml/yaml/html/sql/nsh/plist/md/mod/sum）：Windows 上 `core.autocrlf=true` 会把 checkout 出的源码写成 CRLF，导致 `prettier --check` 与 `gofmt -l` 在本机全线误报，并留下一堆"只改换行"的幻影 diff。
@@ -27,6 +27,7 @@ Phase 4 的 A6 dry-run（run `41102612818`）跑了 **1 小时 8 分钟**：`pre
 - 依赖 runner 镜像里的系统包时，把"镜像滚动可能移除该包"当作已知风险：要么钉镜像版本，要么在 job 里先探测可用性并给出明确失败信息。
 - 平台优先级要落到流水线默认值上：首发 Windows，就应该默认只跑 Windows，其余平台显式勾选，而不是每次都三平台齐跑。
 - 每次远端运行前算一下倍率成本（Linux 1× / Windows 2× / macOS 10×），能用本地脚本得到的证据不要在远端重复。
+- 用 Windows PowerShell 5.1 按行解析 UTF-8 文件（YAML、workflow、脚本）时必须显式 `-Encoding UTF8`：默认按 ANSI（936）解码时多字节序列会吞掉后面的换行，实测把 644 行的 `release.yml` 读成 594 行，按行切分步骤会整段错位，进而误判"语法错误"。含中文的 `.ps1` 输出也要小心：5.1 读 BOM-less 文件按 ANSI 解码，所以本机脚本的输出保持 ASCII。
 
 ##（如复发）再次发生记录
 
