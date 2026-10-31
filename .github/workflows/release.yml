@@ -151,57 +151,64 @@ jobs:
             Write-Error "正式标签缺少 WINDOWS_PFX_BASE64/WINDOWS_PFX_PASSWORD：拒绝发布未签名产物"
             exit 1
           } else {
-            $rsa = [Security.Cryptography.RSA]::Create(2048)
-            $subject = New-Object System.Security.Cryptography.X500DistinguishedName "CN=HappyWork Dry-Run"
-            $req = New-Object System.Security.Cryptography.X509Certificates.CertificateRequest(
-              $subject, $rsa,
-              [Security.Cryptography.HashAlgorithmName]::SHA256,
-              [Security.Cryptography.RSASignaturePadding]::Pkcs1)
-            $req.CertificateExtensions.Add(
-              New-Object Security.Cryptography.X509Certificates.X509BasicConstraintsExtension(
-                $false, $false, 0, $true))
-            $ekus = New-Object System.Security.Cryptography.OidCollection
-            [void]$ekus.Add((New-Object System.Security.Cryptography.Oid "1.3.6.1.5.5.7.3.3"))
-            $req.CertificateExtensions.Add(
-              (New-Object System.Security.Cryptography.X509Certificates.X509EnhancedKeyUsageExtension(
-                $ekus, $false)))
-            $req.CertificateExtensions.Add(
-              (New-Object System.Security.Cryptography.X509Certificates.X509KeyUsageExtension(
-                [Security.Cryptography.X509Certificates.X509KeyUsageFlags]::DigitalSignature, $true)))
-            $cert = $req.CreateSelfSigned(
-              (Get-Date).AddMinutes(-5), (Get-Date).AddHours(4))
-            [IO.File]::WriteAllBytes($pfx,
-              $cert.Export([Security.Cryptography.X509Certificates.X509ContentType]::Pfx, "dryrun-only"))
+            # 语法与命名空间以本机 PowerShell 5.1 实测为准（scripts/windows-sign-check.ps1）：
+            # X500DistinguishedName 在 System.Security.Cryptography.X509Certificates 下，
+            # 且多参数构造必须用 [Type]::new(...)——`New-Object Type(a, b)` 会被解析成
+            # "Missing ')' in method call"（run 41118979006 就是这么红的）。
+            $dn = [System.Security.Cryptography.X509Certificates.X500DistinguishedName]::new("CN=HappyWork Dry-Run")
+            $rsa = [System.Security.Cryptography.RSA]::Create(2048)
+            $req = [System.Security.Cryptography.X509Certificates.CertificateRequest]::new($dn, $rsa, [System.Security.Cryptography.HashAlgorithmName]::SHA256, [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
+            $ekus = [System.Security.Cryptography.OidCollection]::new()
+            [void]$ekus.Add([System.Security.Cryptography.Oid]::new("1.3.6.1.5.5.7.3.3"))
+            $req.CertificateExtensions.Add([System.Security.Cryptography.X509Certificates.X509EnhancedKeyUsageExtension]::new($ekus, $false))
+            $req.CertificateExtensions.Add([System.Security.Cryptography.X509Certificates.X509KeyUsageExtension]::new([System.Security.Cryptography.X509Certificates.X509KeyUsageFlags]::DigitalSignature, $true))
+            $cert = $req.CreateSelfSigned([datetime]::Now.AddMinutes(-5), [datetime]::Now.AddHours(4))
+            [IO.File]::WriteAllBytes($pfx, $cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Pfx, "dryrun-only"))
             "password=dryrun-only" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
             "thumbprint=$($cert.Thumbprint)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
             "mode=selfsigned" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           }
           "path=$pfx" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
+      # Wails v3.0.0 的 `tool sign` 在 Windows 上**尚未实现**（本机实测报
+      # "built-in Windows signing not yet implemented - please use signtool.exe"），
+      # 所以这里直接调 SDK 的 signtool；签名/验签链路已在本地用同一命令验证通过
+      # （scripts/windows-sign-check.ps1）。
       - name: 签名可执行文件与安装包
-        shell: bash
+        shell: pwsh
         env:
           CERT: ${{ steps.cert.outputs.path }}
           PFX_PASSWORD: ${{ steps.cert.outputs.password }}
           TIMESTAMP_URL: ${{ secrets.WINDOWS_TIMESTAMP_URL }}
         run: |
-          set -euo pipefail
-          WAILS="$(go env GOPATH)/bin/wails3"
-          # 没有 RFC 3161 时间戳的签名在证书过期后即不可验证，因此必须有时间戳服务。
-          ts="${TIMESTAMP_URL:-http://timestamp.digicert.com}"
-          "$WAILS" tool sign --input "bin/${BINARY}.exe" \
-            --certificate "$CERT" --password "$PFX_PASSWORD" --timestamp "$ts"
-          "$WAILS" task windows:create:nsis:installer
-          installer="$(ls bin/${BINARY}-*-installer.exe | head -n1)"
-          echo "installer=$installer" >> "$GITHUB_ENV"
-          "$WAILS" tool sign --input "$installer" \
-            --certificate "$CERT" --password "$PFX_PASSWORD" --timestamp "$ts"
+          $ErrorActionPreference = "Stop"
+          $wails = Join-Path (go env GOPATH) "bin/wails3"
+          $exe = "bin\$env:BINARY.exe"
+          & $wails task windows:create:nsis:installer
+          $installer = Get-ChildItem "bin\${env:BINARY}-*-installer.exe" | Select-Object -First 1
+          if (-not $installer) { Write-Error "NSIS 安装包未生成"; exit 1 }
+          "installer=$($installer.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" |
+            Select-Object -Last 1
+          if (-not $signtool) { Write-Error "Windows SDK signtool 未找到"; exit 1 }
+          # 没有 RFC 3161 时间戳的签名在证书过期后即不可验证，因此必须带时间戳。
+          $ts = if ($env:TIMESTAMP_URL) { $env:TIMESTAMP_URL } else { "http://timestamp.digicert.com" }
+          foreach ($target in @($exe, $installer.FullName)) {
+            & $signtool.FullName sign /fd SHA256 /f $env:CERT /p $env:PFX_PASSWORD `
+              /tr $ts /td SHA256 /d "HappyWork" $target
+            if ($LASTEXITCODE -ne 0) { Write-Error "签名失败：$target"; exit 1 }
+          }
 
       # 验签分两条路：
       #   正式（真实证书）→ signtool verify /pa /all，走系统信任链，失败即 job 失败；
-      #   dry-run（自签）→ 断言"签名存在 + 签名者就是这张临时证书 + 文件哈希与签名一致"。
-      # 自签证书不在信任链里，/pa 必然报未trusted；用 NotTrusted 是**预期结果**，
-      # 而 HashMismatch / NotSigned 才说明流水线真的坏了。绝不因为"没法建链"就跳过验签。
+      #   dry-run（自签）→ 签名是否存在看 SignerCertificate 是否非空（临时自签证书的 Status 是
+      #     UnknownError，而未签名文件是 NotSigned 且无签名者，所以**绝不能用状态词判断"有没有签名"**）；
+      #     再断言签名者指纹就是本次生成的证书、具备代码签名 EKU（按 OID 2.5.29.37 / 1.3.6.1.5.5.7.3.3，
+      #     不用本地化 FriendlyName）。
+      #   负向对照用 signtool 验一份被篡改的副本，必须报 TRUST_E_BAD_DIGEST (0x80096010)。
+      #   实测（2026-10-31，见 scripts/windows-sign-check.ps1）：篡改文件尾部只会破坏 PKCS#7
+      #   证书表本身，退化成 NotSigned / 链错误，摘要根本没被比对——那种"拒绝"证明不了签名有效；
+      #   必须篡改镜像主体（25% 处），且只认摘要错误码，不认本地化文案。
       - name: 验签（失败即 job 失败）
         shell: pwsh
         env:
@@ -213,28 +220,55 @@ jobs:
           $installer = Get-ChildItem "bin\${env:BINARY}-*-installer.exe" | Select-Object -First 1
           if (-not $installer) { Write-Error "安装包不存在"; exit 1 }
           $targets += $installer.FullName
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" |
+            Select-Object -Last 1
+          if (-not $signtool) { Write-Error "Windows SDK signtool 未找到"; exit 1 }
           if ($env:MODE -eq "real") {
-            $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" |
-              Select-Object -Last 1
-            if (-not $signtool) { Write-Error "Windows SDK signtool 未找到"; exit 1 }
-            foreach ($t in $targets) { & $signtool.FullName verify /pa /all $t; if ($LASTEXITCODE -ne 0) { exit 1 } }
-          } else {
             foreach ($t in $targets) {
-              $sig = Get-AuthenticodeSignature $t
-              Write-Host "$t -> $($sig.Status) / signer=$($sig.SignerCertificate.Thumbprint)"
-              if ($sig.Status -notin @("Valid", "NotTrusted")) {
-                Write-Error "验签失败：$t 的状态是 $($sig.Status)"; exit 1
-              }
-              if (-not $sig.SignerCertificate -or
-                  $sig.SignerCertificate.Thumbprint -ne $env:EXPECTED_THUMBPRINT) {
-                Write-Error "签名者不是本次生成的临时证书：$t"; exit 1
-              }
-              if ($sig.SignerCertificate.EnhancedKeyUsages.Oid.Value -ne "1.3.6.1.5.5.7.3.3") {
-                Write-Error "证书不具备代码签名 EKU：$t"; exit 1
-              }
+              & $signtool.FullName verify /pa /all $t
+              if ($LASTEXITCODE -ne 0) { exit 1 }
             }
-            Write-Host "dry-run 验签通过：签名存在、签名者匹配、文件哈希一致（自签证书不参与系统信任链）"
+            exit 0
           }
+          function Test-SigningEku($c) {
+            if (-not $c) { return $false }
+            $hasExt = @($c.Extensions | Where-Object { $_.Oid.Value -eq "2.5.29.37" }).Count -gt 0
+            $listed = @($c.EnhancedKeyUsages | ForEach-Object { $_.Value }) -contains "1.3.6.1.5.5.7.3.3"
+            return ($hasExt -or $listed)
+          }
+          foreach ($t in $targets) {
+            $sig = Get-AuthenticodeSignature $t
+            Write-Host "$t -> status=$($sig.Status) signer=$($sig.SignerCertificate.Thumbprint)"
+            if (-not $sig.SignerCertificate) { Write-Error "文件上没有可解析的签名：$t"; exit 1 }
+            if ($sig.SignerCertificate.Thumbprint -ne $env:EXPECTED_THUMBPRINT) {
+              Write-Error "签名者不是本次生成的临时证书：$t"; exit 1
+            }
+            if (-not (Test-SigningEku $sig.SignerCertificate)) {
+              Write-Error "证书缺少代码签名 EKU：$t"; exit 1
+            }
+            if ($sig.Status -in @("NotSigned", "HashMismatch")) {
+              Write-Error "未签名的文件通过了签名检查（状态 $($sig.Status)）：$t"; exit 1
+            }
+            # 篡改镜像主体（25% 处），不是尾部：尾部是 PKCS#7 证书表本身。
+            $copy = Join-Path $env:RUNNER_TEMP ("tampered-" + [guid]::NewGuid().ToString("N") + ".exe")
+            Copy-Item $t $copy -Force
+            $bytes = [IO.File]::ReadAllBytes($copy)
+            $pos = [int]($bytes.Length * 0.25)
+            $bytes[$pos] = $bytes[$pos] -bxor 0xFF
+            [IO.File]::WriteAllBytes($copy, $bytes)
+            $prev = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            $verifyOut = (& $signtool.FullName verify /pa /all $copy 2>&1 | ForEach-Object { $_.ToString() }) -join "`n"
+            $verifyCode = $LASTEXITCODE
+            $ErrorActionPreference = $prev
+            Remove-Item $copy -Force
+            Write-Host "  tampered -> verify exit=$verifyCode"
+            if ($verifyCode -eq 0) { Write-Error "篡改后仍验得过，断言无效：$t"; exit 1 }
+            if ($verifyOut -notmatch "0x80096010") {
+              Write-Error "篡改未以摘要不匹配被拒绝（缺 TRUST_E_BAD_DIGEST 0x80096010）：$t"; exit 1
+            }
+          }
+          Write-Host "dry-run 验签通过：签名存在、签名者匹配、具备代码签名 EKU、主体篡改报 0x80096010（临时自签证书不参与系统信任链）"
 
       - name: 清理证书
         if: always()

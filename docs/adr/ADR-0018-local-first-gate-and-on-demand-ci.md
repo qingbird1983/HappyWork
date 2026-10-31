@@ -19,8 +19,9 @@ Phase 4 把发布流水线接上 GitHub Actions 后，实际用量暴露了两�
 3. **`ci.yml` 取消 push 触发**，只保留 `workflow_dispatch`（可选平台矩阵：默认 `windows`，可加 `linux`/`macos`）与指向 main 的 `pull_request`。远端 CI 的定位改为**里程碑复核**（准备合并 main、准备发版前各跑一次）。
 4. **每个 job 必须有 `timeout-minutes`**（`ci.yml` plan 5 / check 20 / build 20；`release.yml` prepare 20 / windows 25 / macos 30 / linux 25 / release 15）。两个 workflow 都加 `concurrency` + `cancel-in-progress`，同一 ref 重复触发时自动取消旧 run。
 5. **发布 dry-run 默认只跑 Windows**：`workflow_dispatch` 增加 `platforms` 选择（默认 `windows`），`macos`/`linux` job 用 `if: contains(needs.prepare.outputs.platforms, …)` 门控。`v*` 正式标签仍然三平台齐跑且缺任一个即失败（沿用 ADR-0017 第 5 条），本 ADR 不放宽正式发布标准。
-6. **Windows dry-run 不再触碰任何证书存储**：自签证书在内存里用 `CertificateRequest` 生成后导出 PFX；验签在 dry-run 路径改用 `Get-AuthenticodeSignature`，断言"签名存在 + 签名者就是这张临时证书 + 具备代码签名 EKU（按 OID `1.3.6.1.5.5.7.3.3` 判断，不用本地化的 FriendlyName）+ 状态只能是 `Valid`/`NotTrusted`"。`signtool verify /pa /all` 只在真实证书路径执行。理由见 P-016。
+6. **Windows dry-run 不再触碰任何证书存储，也不再经过 Wails**：自签证书在内存里用 `CertificateRequest` 生成后导出 PFX；签名直接调用 SDK 的 `signtool sign`——本机实测 `wails3 tool sign` 在 Windows 上**尚未实现**（`built-in Windows signing not yet implemented`）。验签在 dry-run 路径改用 `Get-AuthenticodeSignature`，断言"签名存在（看 `SignerCertificate` 是否非空：自签证书状态是 `UnknownError`，未签名文件是 `NotSigned` 且没有签名者，状态词不可靠）+ 签名者就是这张临时证书 + 具备代码签名 EKU（按 OID `1.3.6.1.5.5.7.3.3`，不用本地化 `FriendlyName`）+ **镜像主体**篡改后 `signtool verify` 必须报 `TRUST_E_BAD_DIGEST 0x80096010`（篡改文件尾部只会破坏 PKCS#7 证书表，确认不了摘要，不算证据）"。`signtool verify /pa /all` 只在真实证书路径执行。理由见 P-016、P-017、P-012 复发记录。
 7. **A6 的取证范围随之收窄**：Phase 4 的 A6 = Windows dry-run 三件事（构建、签名、验签）跑绿；macOS/Linux 的 dry-run 留到平台范围扩大或临发版里程碑再做，报告里如实标注"未执行（按所有者决定延后）"，不写成通过。
+8. **能量化的都在本机先跑**：新增 `scripts/windows-sign-check.ps1`，本机（有 Windows SDK 的 `signtool`）几十秒内复现"临时证书 → 签名副本 → 验签（指纹/EKU）→ 主体篡改必须报 `0x80096010`"四步，且不改动待验收的 `bin/happywork.exe` 原件；workflow 里的每个 `pwsh` 步骤在推送前用 PowerShell AST 解析器做语法检查。这两招各抓到一个会白烧额度的真 bug。
 
 ## 后果
 
@@ -33,9 +34,9 @@ Phase 4 把发布流水线接上 GitHub Actions 后，实际用量暴露了两�
 **负面 / 需要盯住**
 
 - 失去"每次推送都有独立机器复核"的强度：合并 main 前必须手工确认本地 `gate.sh --race` 全绿，这条写进 standards/04 的收尾清单。
-- 本机没有 NSIS 与 signtool，安装包与真实链式验签只能在远端 dry-run 覆盖：`gate.sh` 的本地覆盖不等于 A6 完成，A6 仍需一次远端 Windows dry-run。
+- 本机有 Windows SDK 的 `signtool`（签名与验签都能本地复现），但**没有 `makensis`**：NSIS 安装包那一步只能在远端 dry-run 覆盖，所以 `gate.sh` + `windows-sign-check.ps1` 的本地绿不等于 A6 完成，A6 仍需一次远端 Windows dry-run。
 - `release.yml` 的 linux job 已知在当前 `ubuntu-latest`（Ubuntu 26.04）上失败：`E: Unable to locate package dpkg-sig`。按本 ADR 它默认不再被触发，缺陷保留在 backlog，等平台范围扩大时连同签名方式一起处理。
-- dry-run 用 `NotTrusted` 作为预期结果，意味着它验证的是"签名机制可用"，不验证"公共信任链可用"；后者仍属 A7。
+- dry-run 只证明"签名机制可用"（签名存在、签名者正确、主体篡改以摘要错误被拒），不证明"公共信任链可用"；后者仍属 A7。另外本地脚本用 Windows PowerShell 5.1 跑，runner 用 pwsh 7，含中文的 `.ps1` 在 5.1 下需要 BOM 才能正确解码——所以 `windows-sign-check.ps1` 的输出刻意保持 ASCII，且 workflow 脚本的语法检查要在 BOM 修正后做；5.1 读 UTF-8 的 YAML/脚本结构时必须显式 `-Encoding UTF8`，否则会把行读少（实测 644→594）。
 
 ## 替代方案（未采纳）
 
