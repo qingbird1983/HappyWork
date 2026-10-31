@@ -28,7 +28,7 @@
 ## 下一步（按优先级，注明阻塞项）
 
 1. **A5 真机验收（所有者）**：按 [docs/design/phase-4/a5-checklist.md](../docs/design/phase-4/a5-checklist.md) 在隔离 `APPDATA` 下走一遍——写文件审批 → 审计面板链状态/验证/导出（导出里不得出现工作区绝对路径与正文）→ 备份面板恢复（二次提示 + 安全副本）→ 撤销创建 → 运行中恢复被拒。
-2. **A6 Windows dry-run 复跑**（唯一剩下的取证动作）：把签名负向对照的修复合并 main 后 `gh workflow run release.yml`（默认只跑 windows）。要看四步：`makensis` 装上并产出安装包、`signtool sign` 签 exe 与安装包、`Get-AuthenticodeSignature` 断言（签名者指纹 + EKU）、主体篡改副本必须报 `0x80096010`，最后产物上传。签名链路已在本机跑通，远端只补安装包那一环。Linux 的 `dpkg-sig` 缺失与 macOS/Linux 范围一起延后。
+2. **A6 Windows dry-run 复跑**（唯一剩下的取证动作）：把 NSIS PATH 修复合并 main 后 `gh workflow run release.yml`（默认只跑 windows）。最新一次 run `41156332487` 已确认 `prepare` 绿、单平台门控生效、5 分钟失败（NSIS 的 PATH 问题，P-018，已修）。下一次要看：`makensis` 能找到并产出安装包、`signtool sign` 签 exe 与安装包、`Get-AuthenticodeSignature` 断言（签名者指纹 + EKU）、主体篡改副本必须报 `0x80096010`，最后产物上传。签名链路已在本机跑通，远端只补安装包那一环。Linux 的 `dpkg-sig` 缺失与 macOS/Linux 范围一起延后。
 3. **A8 收尾**：Windows dry-run 绿 + A5 签收 → 报告定稿 → 看板勾 A5/A6/A8 → tag `phase-4.end`。**不打 `v*`**（发版另排）。
 4. **A7 条件项（随首发排期主动延后）**：所有者提供 Windows PFX、Apple Developer ID/公证、Linux GPG 私钥与 Key ID 后配成 GitHub Secrets，补跑正式签名并回填证书主体/指纹证据。
 5. 可选真机补录（Phase 3 遗留）：持久短语与 secret-scan 的 GUI 提交（宿主安全分类器限制，集成测试已覆盖）。

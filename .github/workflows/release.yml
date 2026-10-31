@@ -117,9 +117,25 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) {
-            choco install nsis --no-progress -y
+          # 教训（run 41156332487）：choco 把 NSIS 装进 Program Files (x86)\NSIS 并修改机器 PATH，
+          # 但当前 runner 进程的环境不会刷新，后续"签名"步骤仍然报
+          # "makensis: executable file not found in $PATH"。用 GITHUB_PATH 显式传给之后的步骤。
+          $candidates = @(
+            (Join-Path ${env:ProgramFiles(x86)} "NSIS\makensis.exe"),
+            (Join-Path $env:ProgramFiles "NSIS\makensis.exe")
+          )
+          $makensis = (Get-Command makensis -ErrorAction SilentlyContinue).Source
+          if (-not $makensis) {
+            $makensis = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
           }
+          if (-not $makensis) {
+            choco install nsis --no-progress -y
+            if ($LASTEXITCODE -ne 0) { Write-Error "choco install nsis 失败"; exit 1 }
+            $makensis = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          }
+          if (-not $makensis) { Write-Error "makensis 未安装或未找到"; exit 1 }
+          Split-Path $makensis | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          Write-Host "makensis: $makensis"
 
       - name: 构建
         shell: bash
